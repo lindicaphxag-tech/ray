@@ -3067,6 +3067,11 @@ void NodeManager::ConsumeSyncMessage(
     syncer::ResourceViewSyncMessage resource_view_sync_message;
     resource_view_sync_message.ParseFromString(message->sync_message());
     NodeID node_id = NodeID::FromBinary(message->node_id());
+    if (failed_nodes_cache_.contains(node_id)) {
+      RAY_LOG(DEBUG).WithField(node_id)
+          << "Ignoring resource view for a node already known to be dead.";
+      return;
+    }
     // Set node labels when node added.
     auto node_labels = MapFromProtobuf(resource_view_sync_message.labels());
     cluster_resource_scheduler_.GetClusterResourceManager().SetNodeLabels(

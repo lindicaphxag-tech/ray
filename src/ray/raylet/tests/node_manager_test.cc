@@ -812,6 +812,72 @@ TEST_F(NodeManagerTest, TestConsumeSyncMessage) {
             kTestTotalCpuResource);
 }
 
+TEST_F(NodeManagerTest, TestConsumeSyncMessageIgnoresKnownDeadNodes) {
+  EXPECT_CALL(*mock_object_directory_, HandleNodeRemoved(_)).Times(2);
+  EXPECT_CALL(*mock_object_manager_, HandleNodeRemoved(_)).Times(2);
+  EXPECT_CALL(*mock_gcs_client_->mock_worker_accessor,
+              AsyncSubscribeToWorkerFailures(_, _));
+  EXPECT_CALL(*mock_gcs_client_->mock_job_accessor, AsyncSubscribeAll(_, _));
+
+  std::function<void(const NodeID &id, rpc::GcsNodeAddressAndLiveness &&node_info)>
+      publish_node_change_callback;
+  EXPECT_CALL(*mock_gcs_client_->mock_node_accessor,
+              AsyncSubscribeToNodeAddressAndLivenessChange(_, _))
+      .WillOnce([&](const rpc::SubscribeCallback<NodeID, rpc::GcsNodeAddressAndLiveness>
+                        &subscribe,
+                    const rpc::StatusCallback &done) {
+        publish_node_change_callback = subscribe;
+      });
+  node_manager_->RegisterGcs();
+  ASSERT_TRUE(publish_node_change_callback);
+
+  auto send_resource_view = [&](const NodeID &node_id) {
+    syncer::ResourceViewSyncMessage payload;
+    payload.mutable_resources_total()->insert({"CPU", kTestTotalCpuResource});
+    payload.mutable_resources_available()->insert({"CPU", kTestTotalCpuResource});
+    payload.mutable_labels()->insert({"label1", "value1"});
+
+    std::string serialized;
+    RAY_CHECK(payload.SerializeToString(&serialized));
+
+    syncer::RaySyncMessage msg;
+    msg.set_node_id(node_id.Binary());
+    msg.set_message_type(syncer::MessageType::RESOURCE_VIEW);
+    msg.set_sync_message(std::move(serialized));
+    node_manager_->ConsumeSyncMessage(std::make_shared<syncer::RaySyncMessage>(msg));
+  };
+
+  auto &resource_manager =
+      cluster_resource_scheduler_->GetClusterResourceManager();
+
+  // RESOURCE_VIEW before ALIVE is valid and must continue to create the node entry.
+  const auto resource_first_node = NodeID::FromRandom();
+  const scheduling::NodeID scheduling_resource_first_node(
+      resource_first_node.Binary());
+  send_resource_view(resource_first_node);
+  EXPECT_TRUE(resource_manager.HasNode(scheduling_resource_first_node));
+
+  rpc::GcsNodeAddressAndLiveness dead;
+  dead.set_state(GcsNodeInfo::DEAD);
+  publish_node_change_callback(resource_first_node, std::move(dead));
+  EXPECT_FALSE(resource_manager.HasNode(scheduling_resource_first_node));
+
+  // Once DEAD has been observed, a delayed resource view must not resurrect it.
+  send_resource_view(resource_first_node);
+  EXPECT_FALSE(resource_manager.HasNode(scheduling_resource_first_node));
+
+  // DEAD may also arrive before the first resource view.
+  const auto dead_first_node = NodeID::FromRandom();
+  const scheduling::NodeID scheduling_dead_first_node(dead_first_node.Binary());
+  rpc::GcsNodeAddressAndLiveness dead_first;
+  dead_first.set_state(GcsNodeInfo::DEAD);
+  publish_node_change_callback(dead_first_node, std::move(dead_first));
+  EXPECT_FALSE(resource_manager.HasNode(scheduling_dead_first_node));
+
+  send_resource_view(dead_first_node);
+  EXPECT_FALSE(resource_manager.HasNode(scheduling_dead_first_node));
+}
+
 TEST_F(NodeManagerTest, TestResizeLocalResourceInstancesSuccessful) {
   // Test 1: Up scaling (increasing resource capacity)
   rpc::ResizeLocalResourceInstancesRequest request;
