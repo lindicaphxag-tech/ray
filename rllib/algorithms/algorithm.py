@@ -4904,6 +4904,11 @@ class TrainIterCtx:
         self.failure_tolerance = (
             self.algo.config.num_consecutive_env_runner_failures_tolerance
         )
+        self.no_sample_steps_tolerance = (
+            self.algo.config.num_consecutive_no_sample_steps_tolerance
+        )
+        self.consecutive_no_sample_steps = 0
+        self.previous_sampled = 0
         return self
 
     def __exit__(self, *args):
@@ -4986,6 +4991,23 @@ class TrainIterCtx:
         min_t = self.algo.config.min_time_s_per_iteration
         min_sample_ts = self.algo.config.min_sample_timesteps_per_iteration
         min_train_ts = self.algo.config.min_train_timesteps_per_iteration
+
+        if min_sample_ts and self.sampled < min_sample_ts:
+            if self.sampled == self.previous_sampled:
+                self.consecutive_no_sample_steps += 1
+                if self.consecutive_no_sample_steps > self.no_sample_steps_tolerance:
+                    raise RuntimeError(
+                        "RLlib training has not sampled any new timesteps for "
+                        f"{self.consecutive_no_sample_steps} consecutive training "
+                        "steps while waiting for "
+                        f"`min_sample_timesteps_per_iteration={min_sample_ts}`. "
+                        "Increase `sample_timeout_s`, reduce "
+                        "`rollout_fragment_length`, or adjust "
+                        "`num_consecutive_no_sample_steps_tolerance`."
+                    )
+            else:
+                self.consecutive_no_sample_steps = 0
+            self.previous_sampled = self.sampled
 
         # Repeat if not enough time has passed or if not enough
         # env|train timesteps have been processed (or these min

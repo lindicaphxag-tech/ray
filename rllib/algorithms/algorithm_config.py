@@ -613,6 +613,7 @@ class AlgorithmConfig(_Config):
         self.delay_between_env_runner_restarts_s = 60.0
         self.restart_failed_sub_environments = False
         self.num_consecutive_env_runner_failures_tolerance = 100
+        self.num_consecutive_no_sample_steps_tolerance = 100
         self.env_runner_health_probe_timeout_s = 30.0
         self.env_runner_restore_timeout_s = 1800.0
 
@@ -3907,6 +3908,7 @@ class AlgorithmConfig(_Config):
         delay_between_env_runner_restarts_s: Optional[float] = NotProvided,
         restart_failed_sub_environments: Optional[bool] = NotProvided,
         num_consecutive_env_runner_failures_tolerance: Optional[int] = NotProvided,
+        num_consecutive_no_sample_steps_tolerance: Optional[int] = NotProvided,
         env_runner_health_probe_timeout_s: Optional[float] = NotProvided,
         env_runner_restore_timeout_s: Optional[float] = NotProvided,
         # Deprecated args.
@@ -3953,6 +3955,11 @@ class AlgorithmConfig(_Config):
                 failures, the EnvRunner itself is NOT affected and won't throw any
                 errors as the flawed sub-environment is silently restarted under the
                 hood.
+            num_consecutive_no_sample_steps_tolerance: The number of consecutive
+                training steps without new sampled timesteps to tolerate while waiting
+                for `min_sample_timesteps_per_iteration` to be reached. After this
+                threshold, the Algorithm raises an error instead of continuing
+                indefinitely. Set to 0 to raise on the first step without progress.
             env_runner_health_probe_timeout_s: Max amount of time in seconds, we should
                 spend waiting for EnvRunner health probe calls
                 (`EnvRunner.ping.remote()`) to respond. Health pings are very cheap,
@@ -4032,6 +4039,10 @@ class AlgorithmConfig(_Config):
         if num_consecutive_env_runner_failures_tolerance is not NotProvided:
             self.num_consecutive_env_runner_failures_tolerance = (
                 num_consecutive_env_runner_failures_tolerance
+            )
+        if num_consecutive_no_sample_steps_tolerance is not NotProvided:
+            self.num_consecutive_no_sample_steps_tolerance = (
+                num_consecutive_no_sample_steps_tolerance
             )
         if env_runner_health_probe_timeout_s is not NotProvided:
             self.env_runner_health_probe_timeout_s = env_runner_health_probe_timeout_s
