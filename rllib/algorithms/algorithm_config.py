@@ -613,7 +613,7 @@ class AlgorithmConfig(_Config):
         self.delay_between_env_runner_restarts_s = 60.0
         self.restart_failed_sub_environments = False
         self.num_consecutive_env_runner_failures_tolerance = 100
-        self.num_consecutive_no_sample_steps_tolerance = 100
+        self.num_consecutive_no_sample_steps_tolerance = 10
         self.env_runner_health_probe_timeout_s = 30.0
         self.env_runner_restore_timeout_s = 1800.0
 
