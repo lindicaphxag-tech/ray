@@ -1,0 +1,45 @@
+name: Validate PBT restore 66689 lint
+
+on:
+  push:
+    branches:
+      - validation/pbt-restore-66689
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Ray lint tool versions
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ruff==0.8.4 black==22.10.0 pydoclint==0.9.1
+      - name: Check changed RLlib files
+        run: |
+          FILES=(
+            python/ray/rllib/policy/policy.py
+            python/ray/rllib/policy/torch_policy_v2.py
+            python/ray/rllib/evaluation/rollout_worker.py
+            python/ray/rllib/algorithms/ppo/tests/test_ppo.py
+          )
+          ruff check "${FILES[@]}"
+          ruff check --select I "${FILES[@]}"
+          black --check "${FILES[@]}"
+          pydoclint \
+            --style=google \
+            --baseline=ci/lint/pydoclint-baseline.txt \
+            --exclude='thirdparty|^python/ray/serve/tests/test_config_files/syntax_error\.py$|^python/ray/_private/parameter\.py$' \
+            --arg-type-hints-in-docstring=False \
+            --skip-checking-raises=True \
+            --check-return-types=False \
+            --allow-init-docstring=True \
+            --check-class-attributes=False \
+            --check-style-mismatch=True \
+            "${FILES[@]}"
