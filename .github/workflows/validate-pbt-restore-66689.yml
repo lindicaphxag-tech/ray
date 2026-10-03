@@ -26,12 +26,7 @@ jobs:
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Overlay only RLlib sources
         run: |
-          RAY_SITE="$(python - <<'PY'
-import pathlib
-import ray
-print(pathlib.Path(ray.__file__).resolve().parent)
-PY
-)"
+          RAY_SITE="$(python -c 'import pathlib, ray; print(pathlib.Path(ray.__file__).resolve().parent)')"
           rm -rf "$RAY_SITE/rllib"
           ln -s "$GITHUB_WORKSPACE/python/ray/rllib" "$RAY_SITE/rllib"
       - name: Run focused PPO restore regression
