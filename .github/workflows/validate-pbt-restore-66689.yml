@@ -24,9 +24,19 @@ jobs:
           python -m pip install "ray[rllib] @ https://s3-us-west-2.amazonaws.com/ray-wheels/latest/ray-3.0.0.dev0-cp311-cp311-manylinux2014_x86_64.whl"
           python -m pip install pytest
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - name: Overlay checkout Python sources
-        run: python python/ray/setup-dev.py --yes
+      - name: Overlay only RLlib sources
+        run: |
+          RAY_SITE="$(python - <<'PY'
+import pathlib
+import ray
+print(pathlib.Path(ray.__file__).resolve().parent)
+PY
+)"
+          rm -rf "$RAY_SITE/rllib"
+          ln -s "$GITHUB_WORKSPACE/python/ray/rllib" "$RAY_SITE/rllib"
       - name: Run focused PPO restore regression
+        env:
+          RAY_AUTH_MODE: disabled
         run: |
           cp python/ray/rllib/algorithms/ppo/tests/test_ppo.py /tmp/test_pbt_restore_66689.py
           cd /tmp
