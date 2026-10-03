@@ -79,6 +79,11 @@ torch, _ = try_import_torch()
 
 logger = logging.getLogger(__name__)
 
+# Internal marker used by Algorithm/EnvRunner checkpoint restoration. When set,
+# the already-constructed Policy keeps the current trial config while restoring
+# checkpointed training state (weights, optimizer state, counters, etc.).
+PRESERVE_CURRENT_POLICY_CONFIG = "_rllib_preserve_current_policy_config"
+
 
 @OldAPIStack
 class PolicySpec:
@@ -1026,8 +1031,12 @@ class Policy(metaclass=ABCMeta):
                     f"{policy_spec.action_space}) does not match this Policy's "
                     f"action space ({self.action_space})."
                 )
-            # Override config, if part of the spec.
-            if policy_spec.config:
+            # Direct Policy checkpoint restores use the serialized config. Algorithm
+            # restores, however, may target an already-constructed Policy whose config
+            # is the current trial control plane (for example after a PBT mutation).
+            if policy_spec.config and not state.get(
+                PRESERVE_CURRENT_POLICY_CONFIG, False
+            ):
                 self.config = policy_spec.config
 
         # Override NN weights.
