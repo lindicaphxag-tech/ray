@@ -1,0 +1,32 @@
+name: Validate PBT restore 66689
+
+on:
+  push:
+    branches:
+      - validation/pbt-restore-66689
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install nightly Ray and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "ray[rllib] @ https://s3-us-west-2.amazonaws.com/ray-wheels/latest/ray-3.0.0.dev0-cp311-cp311-manylinux2014_x86_64.whl"
+          python -m pip install pytest torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Overlay checkout Python sources
+        run: python python/ray/setup-dev.py --yes
+      - name: Run focused PPO restore regression
+        run: |
+          python -m pytest \
+            python/ray/rllib/algorithms/ppo/tests/test_ppo.py \
+            -q -vv -k restore_keeps_current_old_api_policy_config
