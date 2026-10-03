@@ -4904,6 +4904,8 @@ class TrainIterCtx:
         self.failure_tolerance = (
             self.algo.config.num_consecutive_env_runner_failures_tolerance
         )
+        self.sample_progress_failures = 0
+        self._last_sampled = 0
         return self
 
     def __exit__(self, *args):
@@ -4986,6 +4988,29 @@ class TrainIterCtx:
         min_t = self.algo.config.min_time_s_per_iteration
         min_sample_ts = self.algo.config.min_sample_timesteps_per_iteration
         min_train_ts = self.algo.config.min_train_timesteps_per_iteration
+
+        # A finite sampling timeout may produce a successful training-step call
+        # without advancing the sampled-step counter. If this iteration requires
+        # sampling progress, cap how long we can spin without making any.
+        if (
+            min_sample_ts
+            and self.algo.config.sample_timeout_s is not None
+            and self.sampled < min_sample_ts
+        ):
+            if self.sampled > self._last_sampled:
+                self.sample_progress_failures = 0
+            else:
+                self.sample_progress_failures += 1
+                if self.sample_progress_failures > self.failure_tolerance:
+                    raise RuntimeError(
+                        "No sampling progress for more than "
+                        f"{self.failure_tolerance} consecutive training steps while "
+                        f"min_sample_timesteps_per_iteration={min_sample_ts} and "
+                        f"sample_timeout_s={self.algo.config.sample_timeout_s}. "
+                        "Increase sample_timeout_s, decrease rollout_fragment_length, "
+                        "or lower min_sample_timesteps_per_iteration."
+                    )
+            self._last_sampled = self.sampled
 
         # Repeat if not enough time has passed or if not enough
         # env|train timesteps have been processed (or these min
