@@ -28,6 +28,7 @@ jobs:
         run: python python/ray/setup-dev.py --yes
       - name: Run focused PPO restore regression
         run: |
-          python -m pytest \
-            python/ray/rllib/algorithms/ppo/tests/test_ppo.py \
-            -q -vv -k restore_keeps_current_old_api_policy_config
+          cp python/ray/rllib/algorithms/ppo/tests/test_ppo.py /tmp/test_pbt_restore_66689.py
+          cd /tmp
+          python -m pytest test_pbt_restore_66689.py -q -vv \
+            -k restore_keeps_current_old_api_policy_config
