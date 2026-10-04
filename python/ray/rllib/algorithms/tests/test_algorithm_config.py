@@ -622,6 +622,18 @@ class TestAlgorithmConfig(unittest.TestCase):
             names.index("AddObservationsFromEpisodesToBatch") + 1,
         )
 
+        # The public builder contract is positional: the second parameter name
+        # should not be part of the API surface.
+        def positional_builder(pipeline, dev):
+            return pipeline
+
+        config = (
+            PPOConfig()
+            .environment("CartPole-v1")
+            .env_runners(env_to_module_connector_builder=positional_builder)
+        )
+        config.build_env_to_module_connector(env=env, device="cpu")
+
         # Legacy `*_connector` pieces keep their historical placement.
 
         # Env-to-module: prepended.
