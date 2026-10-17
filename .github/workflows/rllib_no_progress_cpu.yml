@@ -1,0 +1,24 @@
+name: RLlib source-level no-progress CPU contracts
+
+on:
+  pull_request:
+    branches:
+      - fix/rllib-train-iteration-no-progress-66622
+    paths:
+      - "ci/rllib_train_iter_source_contract.py"
+      - ".github/workflows/rllib_no_progress_cpu.yml"
+      - "python/ray/rllib/algorithms/algorithm.py"
+      - "python/ray/rllib/algorithms/algorithm_config.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  train-iter-ctx:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Execute exact TrainIterCtx source and independent failure contracts
+        run: python3 ci/rllib_train_iter_source_contract.py
