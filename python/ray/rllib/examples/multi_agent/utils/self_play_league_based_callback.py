@@ -268,6 +268,7 @@ class SelfPlayLeagueBasedCallback(RLlibCallback):
                     mid: multi_rl_module[mid].get_state() for mid in modules_to_install
                 }
                 new_module_state = {COMPONENT_RL_MODULE: ray.put(module_states)}
+
                 # Install weights and activate the mapping in one call per
                 # EnvRunner. Separate foreach calls could target different
                 # healthy sets as workers recover between dispatches.
