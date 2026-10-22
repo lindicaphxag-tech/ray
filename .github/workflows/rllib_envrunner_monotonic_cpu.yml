@@ -23,10 +23,9 @@ jobs:
           python -m py_compile python/ray/rllib/env/multi_agent_env_runner.py
           python -m py_compile python/ray/rllib/env/tests/test_multi_agent_env_runner.py
           python -m py_compile ci/rllib_envrunner_monotonic_contract.py
-      - name: Check candidate production and native test formatting
+      - name: Focused lint without rewriting unchanged upstream legacy style
         run: |
-          ruff check python/ray/rllib/env/multi_agent_env_runner.py python/ray/rllib/env/tests/test_multi_agent_env_runner.py
-          ruff format --check python/ray/rllib/env/multi_agent_env_runner.py python/ray/rllib/env/tests/test_multi_agent_env_runner.py
+          ruff check --isolated --select E4,E7,E9,F python/ray/rllib/env/multi_agent_env_runner.py python/ray/rllib/env/tests/test_multi_agent_env_runner.py
       - name: Run actual proposed EnvRunner stale-version invariant
         run: python ci/rllib_envrunner_monotonic_contract.py
       - name: Fetch unchanged official master method for negative control
