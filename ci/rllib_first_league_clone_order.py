@@ -24,7 +24,7 @@ callback_path=paths[0] if paths else Path(
     "python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py")
 runner_path=paths[1] if len(paths)>1 else Path(
     "python/ray/rllib/env/multi_agent_env_runner.py")
-group_path=Path("python/ray/rllib/env/env_runner_group.py")
+group_path=paths[2] if len(paths)>2 else Path("python/ray/rllib/env/env_runner_group.py")
 
 class ObjectRef:
     def __init__(self, value): self.value=copy.deepcopy(value)
