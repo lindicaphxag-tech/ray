@@ -95,6 +95,20 @@ else:
     assert runner._weights_seq_no==8
     print("PASS: versioned propagation of mutated learner state to actual EnvRunner method")
 
+# Independent downstream limitation: the EnvRunner itself still accepts
+# a stale version stamp even when rejecting that stale module payload.
+# This is NOT claimed to be repaired by Ray PR #67131.
+live_runner_version = runner._weights_seq_no
+live_runner_weights = runner.module.get_state()
+runner.set_state({
+    COMPONENT_RL_MODULE:{"policy":{"weight":-999}},
+    WEIGHTS_SEQ_NO:live_runner_version-1,
+})
+assert runner.module.get_state()==live_runner_weights, "Stale state changed actual runner weights"
+assert runner._weights_seq_no==live_runner_version-1
+print("CONFIRMED SEPARATE DOWNSTREAM GAP: EnvRunner rejected stale parameters but downgraded its seq",
+      live_runner_version,"->",runner._weights_seq_no)
+
 # A delayed older checkpoint must not relabel a newer learner.
 learner.set_state({
   COMPONENT_RL_MODULE:{"policy":{"weight":-1}},
