@@ -14,6 +14,7 @@ import ast
 import copy
 import re
 import sys
+from typing import Any, Callable, Dict, List, Optional, Union
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,6 +24,7 @@ callback_path=paths[0] if paths else Path(
     "python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py")
 runner_path=paths[1] if len(paths)>1 else Path(
     "python/ray/rllib/env/multi_agent_env_runner.py")
+group_path=Path("python/ray/rllib/env/env_runner_group.py")
 
 class ObjectRef:
     def __init__(self, value): self.value=copy.deepcopy(value)
@@ -63,47 +65,71 @@ class Module:
         self.installations+=1
 
 class Bank(dict):
+    def __init__(self,states,events=None,label=None):
+        super().__init__(states)
+        self.events=events
+        self.label=label
     def get_state(self):
         return {k:v.get_state() for k,v in self.items()}
     def set_state(self,states):
         for k,value in states.items():
             self[k].set_state(value)
+        if self.events is not None:
+            self.events.append(("weights",self.label))
 
 class Runner:
     set_state=runner_method
-    def __init__(self,events):
+    def __init__(self,events,label):
         self._weights_seq_no=7
         self.module=Bank({
             "main":Module(42),"main_0":Module(-1),
-            "league_exploiter_1":Module(-2),"main_exploiter_1":Module(-3)})
+            "league_exploiter_1":Module(-2),"main_exploiter_1":Module(-3)},
+            events=events,label=label)
         self.events=events
+        self.label=label
         self.config=SimpleNamespace(multi_agent=self.install_mapping)
     def install_mapping(self,**kwargs):
-        self.events.append(("mapping",set(kwargs["policies_to_train"])))
+        self.events.append(("mapping",self.label))
         assert callable(kwargs["policy_mapping_fn"])
 
+# Delegate synchronous dispatch to the REAL EnvRunnerGroup.foreach_env_runner.
+class RemoteResult:
+    ok=True
+    def __init__(self,value):self.value=value
+    def get(self):return self.value
+
+class RemoteResults(list):
+    def ignore_errors(self):return self
+
+class Manager:
+    def __init__(self,remote):self.remote=remote
+    def actor_ids(self):return [1]
+    def foreach_actor(self,func,**kwargs):
+        assert kwargs["timeout_seconds"] is None, "The synchronous path must not time out"
+        assert kwargs["healthy_only"] is True
+        return RemoteResults([RemoteResult(func(self.remote))])
+
+group_foreach=production_method(
+    group_path,"EnvRunnerGroup","foreach_env_runner",
+    {"Union":Union,"Callable":Callable,"List":List,"Dict":Dict,"Optional":Optional,
+     "Any":Any,"EnvRunner":Runner,"T":object,
+     "FaultTolerantActorManager":SimpleNamespace(
+         handle_remote_call_result_errors=lambda *args,**kwargs:None)})
+
 class Group:
-    def __init__(self,runner,events):
-        self.runner=runner
+    foreach_env_runner=group_foreach
+    def __init__(self,local_runner,remote_runner,events):
+        self.local_env_runner=local_runner
+        self._worker_manager=Manager(remote_runner)
+        self._ignore_ray_errors_on_env_runners=False
+        self._num_env_runners_dropped_lifetime=0
         self.events=events
         self.queued=[]
-    def foreach_env_runner(self,func,**kwargs):
-        assert kwargs.get("local_env_runner") is True
-        before=len(self.events)
-        result=func(self.runner)
-        # The real config callback logs mapping directly. A module-only state
-        # callback does not, so capture its successful installation here.
-        if len(self.events)==before:
-            self.events.append(("weight_installed",self.runner.module.get_state()))
-        else:
-            assert len(self.events)==before+1
-            assert self.events[-1][0]=="mapping"
-        return [result]
     def sync_weights(self,**kwargs):
-        # A legal execution schedule of RLlib's async-fetch-ready path: the
-        # new publish is queued but has not executed before mapping.
+        # The original default dispatch is async: a newly enqueued weight
+        # packet need not have finished when the next mapping call runs.
         self.queued.append(kwargs)
-        self.events.append(("async_publish",kwargs))
+        self.events.append(("async_publish",None))
 
 class LearnerGroup:
     def __init__(self):self.states=[]
@@ -134,8 +160,9 @@ local=Bank({
     "main":Module(42),"main_0":Module(0),
     "league_exploiter_1":Module(0),"main_exploiter_1":Module(0)})
 events=[]
-remote=Runner(events)
-group=Group(remote,events)
+local_runner=Runner(events,"local")
+remote=Runner(events,"remote")
+group=Group(local_runner,remote,events)
 learner_group=LearnerGroup()
 algorithm=SimpleNamespace(iteration=1,env_runner=SimpleNamespace(module=local),
     env_runner_group=group,learner_group=learner_group)
@@ -147,17 +174,21 @@ assert set(callback.trainable_policies)=={
     "main","league_exploiter_1","main_exploiter_1"}
 ids=("main_0","league_exploiter_1","main_exploiter_1")
 assert all(local[mid].weight==42 for mid in ids)
-assert len([x for x in events if x[0]=="mapping"])==1,events
+assert len([x for x in events if x[0]=="mapping"])==2,events
 if baseline:
     assert len(group.queued)==1 and group.queued[0].get("policies")==list(ids)
     assert all(remote.module[mid].weight!=42 for mid in ids)
-    assert [x[0] for x in events][:2]==["async_publish","mapping"],events
+    assert [x[0] for x in events]==[
+        "async_publish","mapping","mapping"],events
     print("EXPECTED BASELINE: first league mapping installed before its async cloned weights")
 else:
     assert not group.queued
-    assert all(remote.module[mid].weight==42 for mid in ids)
-    assert all(remote.module[mid].installations==1 for mid in ids)
-    assert events[0][0]=="weight_installed" and events[1][0]=="mapping",events
-    assert remote._weights_seq_no==7
-    print("PASS: initial three self-play clones installed before mapping, version gate bypassed")
-print("PASS: actual callback / EnvRunner source-version contract")
+    for runner in (local_runner,remote):
+        assert all(runner.module[mid].weight==42 for mid in ids)
+        assert all(runner.module[mid].installations==1 for mid in ids)
+        assert runner._weights_seq_no==7
+    assert events==[
+        ("weights","local"),("weights","remote"),
+        ("mapping","local"),("mapping","remote")],events
+    print("PASS: two EnvRunners receive first clone weights before either mapping")
+print("PASS: real Callback / EnvRunnerGroup / EnvRunner source-level order")
