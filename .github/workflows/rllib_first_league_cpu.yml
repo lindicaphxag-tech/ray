@@ -27,5 +27,6 @@ jobs:
         run: |
           curl --fail --silent --show-error --location https://raw.githubusercontent.com/ray-project/ray/36945af9daf4f7c6e258eec5dd57b5558391f579/python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py -o /tmp/previous_selfplay_callback.py
           curl --fail --silent --show-error --location https://raw.githubusercontent.com/ray-project/ray/36945af9daf4f7c6e258eec5dd57b5558391f579/python/ray/rllib/env/multi_agent_env_runner.py -o /tmp/previous_multi_agent_env_runner.py
+          curl --fail --silent --show-error --location https://raw.githubusercontent.com/ray-project/ray/36945af9daf4f7c6e258eec5dd57b5558391f579/python/ray/rllib/env/env_runner_group.py -o /tmp/previous_env_runner_group.py
       - name: Reproduce initial-clone install-before-map gap from prior PR
-        run: python ci/rllib_first_league_clone_order.py /tmp/previous_selfplay_callback.py /tmp/previous_multi_agent_env_runner.py --baseline
+        run: python ci/rllib_first_league_clone_order.py /tmp/previous_selfplay_callback.py /tmp/previous_multi_agent_env_runner.py /tmp/previous_env_runner_group.py --baseline
