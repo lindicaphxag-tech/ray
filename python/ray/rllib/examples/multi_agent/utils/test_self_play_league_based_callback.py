@@ -2,6 +2,8 @@ from unittest.mock import MagicMock
 
 from ray.rllib.core import COMPONENT_RL_MODULE
 from ray.rllib.env.multi_agent_env_runner import MultiAgentEnvRunner
+from ray.rllib.env.env_runner_group import EnvRunnerGroup
+from ray.rllib.utils.actor_manager import FaultTolerantActorManager
 from ray.rllib.examples.multi_agent.utils import (
     self_play_league_based_callback as callback_module,
 )
@@ -121,6 +123,96 @@ def test_initial_league_clones_are_installed_before_first_mapping(monkeypatch):
     algorithm.add_module.assert_not_called()
     for mid in ("main_0", "league_exploiter_1", "main_exploiter_1"):
         modules[mid].set_state.assert_called_once_with(main_state)
+
+
+def test_recovered_env_runner_cannot_activate_mapping_without_weights(monkeypatch):
+    """The healthy actor set may change between independent dispatches."""
+    callback = SelfPlayLeagueBasedCallback(win_rate_threshold=0.5)
+    state = {"weights": [2, 3, 5]}
+    modules = {name: MagicMock() for name in (
+        "main", "main_0", "league_exploiter_1", "main_exploiter_1"
+    )}
+    for module in modules.values():
+        module.get_state.return_value = state
+    local_modules = MagicMock()
+    local_modules.__getitem__.side_effect = modules.__getitem__
+    local_modules.get_state.return_value = {
+        name: state for name in modules
+    }
+
+    algorithm = MagicMock()
+    algorithm.iteration = 1
+    algorithm.env_runner.module = local_modules
+    monkeypatch.setattr(callback_module.ray, "put", lambda value: object())
+
+    events = []
+
+    class Runner:
+        def __init__(self, label):
+            self.label = label
+            self.installed = False
+            self.mapped = False
+            self.config = MagicMock()
+            self.config.multi_agent.side_effect = self._map
+
+        def set_state(self, value):
+            assert COMPONENT_RL_MODULE in value
+            self.installed = True
+            events.append(("weights", self.label))
+
+        def _map(self, **kwargs):
+            # Fail if a runner receives the mapping before its initial weights.
+            assert self.installed
+            self.mapped = True
+            events.append(("mapping", self.label))
+
+    local = Runner("local")
+    remote1 = Runner("remote1")
+    remote2 = Runner("remote2")
+
+    class Responses(list):
+        def ignore_errors(self):
+            return self
+
+    class Result:
+        def get(self):
+            return None
+
+    healthy_calls = []
+
+    def foreach_actor(func, **kwargs):
+        assert kwargs["timeout_seconds"] is None
+        healthy_calls.append(1)
+        # Remote2 recovers after the first dispatch round.
+        reachable = [remote1] if len(healthy_calls) == 1 else [remote1, remote2]
+        return Responses([Result() for runner in reachable if func(runner) is None])
+
+    group = MagicMock()
+    group.local_env_runner = local
+    group._worker_manager.actor_ids.return_value = [1, 2]
+    group._worker_manager.foreach_actor.side_effect = foreach_actor
+    group._ignore_ray_errors_on_env_runners = False
+    group.foreach_env_runner.side_effect = lambda func, **kwargs: (
+        EnvRunnerGroup.foreach_env_runner(group, func, **kwargs)
+    )
+    monkeypatch.setattr(
+        FaultTolerantActorManager,
+        "handle_remote_call_result_errors",
+        lambda *args, **kwargs: None,
+    )
+    algorithm.env_runner_group = group
+
+    callback.on_train_result(
+        algorithm=algorithm,
+        result={ENV_RUNNER_RESULTS: {"win_rate_main": 0.9}},
+    )
+    assert len(healthy_calls) == 1
+    assert events == [
+        ("weights", "local"), ("mapping", "local"),
+        ("weights", "remote1"), ("mapping", "remote1"),
+    ]
+    assert local.mapped and remote1.mapped
+    assert not remote2.mapped and not remote2.installed
 
 
 def test_new_module_state_bypasses_equal_global_weights_sequence():
