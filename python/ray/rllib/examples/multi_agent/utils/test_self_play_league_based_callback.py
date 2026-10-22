@@ -129,16 +129,15 @@ def test_recovered_env_runner_cannot_activate_mapping_without_weights(monkeypatc
     """The healthy actor set may change between independent dispatches."""
     callback = SelfPlayLeagueBasedCallback(win_rate_threshold=0.5)
     state = {"weights": [2, 3, 5]}
-    modules = {name: MagicMock() for name in (
-        "main", "main_0", "league_exploiter_1", "main_exploiter_1"
-    )}
+    modules = {
+        name: MagicMock()
+        for name in ("main", "main_0", "league_exploiter_1", "main_exploiter_1")
+    }
     for module in modules.values():
         module.get_state.return_value = state
     local_modules = MagicMock()
     local_modules.__getitem__.side_effect = modules.__getitem__
-    local_modules.get_state.return_value = {
-        name: state for name in modules
-    }
+    local_modules.get_state.return_value = {name: state for name in modules}
 
     algorithm = MagicMock()
     algorithm.iteration = 1
