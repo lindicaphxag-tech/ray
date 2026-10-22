@@ -271,19 +271,18 @@ class SelfPlayLeagueBasedCallback(RLlibCallback):
                 new_module_state = {
                     COMPONENT_RL_MODULE: ray.put(module_states)
                 }
-                algorithm.env_runner_group.foreach_env_runner(
-                    lambda env_runner: env_runner.set_state(new_module_state),
-                    local_env_runner=True,
-                )
+                # Install weights and activate the mapping in one call per
+                # EnvRunner. Separate foreach calls could target different
+                # healthy sets as workers recover between dispatches.
+                def install_and_activate(env_runner):
+                    env_runner.set_state(new_module_state)
+                    env_runner.config.multi_agent(
+                        policy_mapping_fn=agent_to_module_mapping_fn,
+                        policies_to_train=_trainable_policies,
+                    )
 
                 algorithm.env_runner_group.foreach_env_runner(
-                    lambda env_runner: env_runner.config.multi_agent(
-                        policy_mapping_fn=agent_to_module_mapping_fn,
-                        # This setting doesn't really matter for EnvRunners (no
-                        # training going on there, but we'll update this as well
-                        # here for good measure).
-                        policies_to_train=_trainable_policies,
-                    ),
+                    install_and_activate,
                     local_env_runner=True,
                 )
                 # Set all Learner workers' should_module_be_updated to the new
