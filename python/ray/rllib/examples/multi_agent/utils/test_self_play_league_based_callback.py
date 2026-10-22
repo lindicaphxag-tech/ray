@@ -207,8 +207,10 @@ def test_recovered_env_runner_cannot_activate_mapping_without_weights(monkeypatc
     )
     assert len(healthy_calls) == 1
     assert events == [
-        ("weights", "local"), ("mapping", "local"),
-        ("weights", "remote1"), ("mapping", "remote1"),
+        ("weights", "local"),
+        ("mapping", "local"),
+        ("weights", "remote1"),
+        ("mapping", "remote1"),
     ]
     assert local.mapped and remote1.mapped
     assert not remote2.mapped and not remote2.installed
