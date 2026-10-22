@@ -57,10 +57,11 @@ def test_new_self_play_module_weights_are_synced_before_mapping(monkeypatch):
     algorithm.add_module.assert_called_once()
     algorithm.set_state.assert_called_once()
     assert captured_state["value"] == {"main_1": {"weights": [1, 2, 3]}}
-    assert len(algorithm.env_runner_group.foreach_env_runner.call_args_list) == 2
+    assert len(algorithm.env_runner_group.foreach_env_runner.call_args_list) == 1
 
     # The new module's weights must be installed before the mapping can route
     # episodes to it; the module-only state intentionally omits WEIGHTS_SEQ_NO.
+    # A single per-runner RPC must install the clone and activate the mapping.
     assert [event[0] for event in events] == ["state", "mapping"]
     assert events[0][1] == {COMPONENT_RL_MODULE: state_ref}
     assert "policy_mapping_fn" in events[1][1]
@@ -111,6 +112,7 @@ def test_initial_league_clones_are_installed_before_first_mapping(monkeypatch):
             for mid in ("main_0", "league_exploiter_1", "main_exploiter_1")
         }
     ]
+    # One callback combines installation and activation in order.
     assert [event[0] for event in events] == ["weights", "mapping"]
     assert events[0][1] == {COMPONENT_RL_MODULE: ref}
     assert "policy_mapping_fn" in events[1][1]
