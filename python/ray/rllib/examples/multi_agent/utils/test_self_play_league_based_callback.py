@@ -66,6 +66,61 @@ def test_new_self_play_module_weights_are_synced_before_mapping(monkeypatch):
     assert "policy_mapping_fn" in events[1][1]
 
 
+def test_initial_league_clones_are_installed_before_first_mapping(monkeypatch):
+    """The first three copied opponents need the same forced-install contract."""
+    callback = SelfPlayLeagueBasedCallback(win_rate_threshold=0.5)
+    main_state = {"weights": [11, 13, 17]}
+    module_ids = ("main", "main_0", "league_exploiter_1", "main_exploiter_1")
+    modules = {mid: MagicMock() for mid in module_ids}
+    for module in modules.values():
+        module.get_state.return_value = main_state
+
+    local_modules = MagicMock()
+    local_modules.__getitem__.side_effect = modules.__getitem__
+    local_modules.get_state.return_value = {mid: main_state for mid in module_ids}
+
+    algorithm = MagicMock()
+    algorithm.iteration = 1
+    algorithm.env_runner.module = local_modules
+
+    ref = object()
+    published = []
+    monkeypatch.setattr(
+        callback_module.ray, "put", lambda states: published.append(states) or ref
+    )
+
+    events = []
+    remote = MagicMock()
+    remote.set_state.side_effect = lambda state: events.append(("weights", state))
+    remote.config.multi_agent.side_effect = lambda **kwargs: events.append(
+        ("mapping", kwargs)
+    )
+
+    def run_on_env_runners(func, **kwargs):
+        assert kwargs["local_env_runner"] is True
+        return [func(remote)]
+
+    algorithm.env_runner_group.foreach_env_runner.side_effect = run_on_env_runners
+    callback.on_train_result(
+        algorithm=algorithm,
+        result={ENV_RUNNER_RESULTS: {"win_rate_main": 0.9}},
+    )
+    assert published == [
+        {
+            mid: main_state
+            for mid in ("main_0", "league_exploiter_1", "main_exploiter_1")
+        }
+    ]
+    assert [event[0] for event in events] == ["weights", "mapping"]
+    assert events[0][1] == {COMPONENT_RL_MODULE: ref}
+    assert "policy_mapping_fn" in events[1][1]
+    algorithm.env_runner_group.sync_weights.assert_not_called()
+    algorithm.learner_group.set_weights.assert_called_once()
+    algorithm.add_module.assert_not_called()
+    for mid in ("main_0", "league_exploiter_1", "main_exploiter_1"):
+        modules[mid].set_state.assert_called_once_with(main_state)
+
+
 def test_new_module_state_bypasses_equal_global_weights_sequence():
     """A new module's first state must bypass the global sequence-number gate."""
     runner = MagicMock()

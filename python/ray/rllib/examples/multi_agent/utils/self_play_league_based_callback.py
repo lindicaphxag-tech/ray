@@ -228,12 +228,15 @@ class SelfPlayLeagueBasedCallback(RLlibCallback):
                     multi_rl_module["main_0"].set_state(main_state)
                     multi_rl_module["league_exploiter_1"].set_state(main_state)
                     multi_rl_module["main_exploiter_1"].set_state(main_state)
-                    # We need to sync the just copied local weights to all the
-                    # remote workers and remote Learner workers as well.
-                    algorithm.env_runner_group.sync_weights(
-                        policies=["main_0", "league_exploiter_1", "main_exploiter_1"]
-                    )
+                    # Install the cloned weights before activating the mapping.
+                    # sync_weights() uses an asynchronous default and its global
+                    # sequence gate may skip newly initialized modules.
                     algorithm.learner_group.set_weights(multi_rl_module.get_state())
+                    modules_to_install = [
+                        "main_0",
+                        "league_exploiter_1",
+                        "main_exploiter_1",
+                    ]
                 else:
                     algorithm.add_module(
                         module_id=new_mod_id,
@@ -255,22 +258,23 @@ class SelfPlayLeagueBasedCallback(RLlibCallback):
                             }
                         }
                     )
-                    # add_module creates the module on EnvRunners, but the cloned
-                    # parameters are only set on the Learner above. Push the weights
-                    # before the new mapping can route episodes to this opponent.
-                    #
-                    # Do not use sync_weights() here: its WEIGHTS_SEQ_NO gate can
-                    # discard this module-only update when an EnvRunner already has
-                    # the current global sequence number. Omitting WEIGHTS_SEQ_NO
-                    # forces first installation without changing global versioning.
-                    new_module_state_ref = ray.put(
-                        {new_mod_id: multi_rl_module[module_id].get_state()}
-                    )
-                    new_module_state = {COMPONENT_RL_MODULE: new_module_state_ref}
-                    algorithm.env_runner_group.foreach_env_runner(
-                        lambda env_runner: env_runner.set_state(new_module_state),
-                        local_env_runner=True,
-                    )
+                    modules_to_install = [new_mod_id]
+
+                # Both first-time league initialization and later cloning must
+                # finish installing their source weights before the mapping update.
+                # The standard sync_weights() path is async and may skip modules
+                # when WEIGHTS_SEQ_NO already matches, so force a module-only state.
+                module_states = {
+                    mid: multi_rl_module[mid].get_state()
+                    for mid in modules_to_install
+                }
+                new_module_state = {
+                    COMPONENT_RL_MODULE: ray.put(module_states)
+                }
+                algorithm.env_runner_group.foreach_env_runner(
+                    lambda env_runner: env_runner.set_state(new_module_state),
+                    local_env_runner=True,
+                )
 
                 algorithm.env_runner_group.foreach_env_runner(
                     lambda env_runner: env_runner.config.multi_agent(
