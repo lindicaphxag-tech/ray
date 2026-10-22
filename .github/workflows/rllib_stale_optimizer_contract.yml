@@ -1,0 +1,21 @@
+name: RLlib paired Learner state provenance (CPU)
+on:
+  push:
+    branches:
+      - research/rllib-stale-optimizer-transaction-20261023
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  transactional-state:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Execute real Learner set_state with stale paired checkpoint
+        run: |
+          python -m py_compile python/ray/rllib/core/learner/learner.py
+          python ci/rllib_stale_optimizer_transaction_contract.py
