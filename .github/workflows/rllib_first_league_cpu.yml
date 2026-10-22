@@ -1,0 +1,32 @@
+name: RLlib self-play first-clone state ordering (CPU)
+on:
+  pull_request:
+    paths:
+      - "ci/rllib_first_league_clone_order.py"
+      - ".github/workflows/rllib_first_league_cpu.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  initial-install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile source and test fixture
+        run: |
+          python -m py_compile python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py
+          python -m py_compile python/ray/rllib/examples/multi_agent/utils/test_self_play_league_based_callback.py
+          python -m py_compile ci/rllib_first_league_clone_order.py
+      - name: Verify real patched callback and EnvRunner installation
+        run: python ci/rllib_first_league_clone_order.py
+      - name: Fetch unchanged previous official PR head as negative control
+        run: |
+          curl --fail --silent --show-error --location https://raw.githubusercontent.com/ray-project/ray/36945af9daf4f7c6e258eec5dd57b5558391f579/python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py -o /tmp/previous_selfplay_callback.py
+          curl --fail --silent --show-error --location https://raw.githubusercontent.com/ray-project/ray/36945af9daf4f7c6e258eec5dd57b5558391f579/python/ray/rllib/env/multi_agent_env_runner.py -o /tmp/previous_multi_agent_env_runner.py
+          curl --fail --silent --show-error --location https://raw.githubusercontent.com/ray-project/ray/36945af9daf4f7c6e258eec5dd57b5558391f579/python/ray/rllib/env/env_runner_group.py -o /tmp/previous_env_runner_group.py
+      - name: Reproduce initial-clone install-before-map gap from prior PR
+        run: python ci/rllib_first_league_clone_order.py /tmp/previous_selfplay_callback.py /tmp/previous_multi_agent_env_runner.py /tmp/previous_env_runner_group.py --baseline
