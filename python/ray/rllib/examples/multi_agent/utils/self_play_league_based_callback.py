@@ -265,25 +265,22 @@ class SelfPlayLeagueBasedCallback(RLlibCallback):
                 # The standard sync_weights() path is async and may skip modules
                 # when WEIGHTS_SEQ_NO already matches, so force a module-only state.
                 module_states = {
-                    mid: multi_rl_module[mid].get_state()
-                    for mid in modules_to_install
+                    mid: multi_rl_module[mid].get_state() for mid in modules_to_install
                 }
-                new_module_state = {
-                    COMPONENT_RL_MODULE: ray.put(module_states)
-                }
-                algorithm.env_runner_group.foreach_env_runner(
-                    lambda env_runner: env_runner.set_state(new_module_state),
-                    local_env_runner=True,
-                )
+                new_module_state = {COMPONENT_RL_MODULE: ray.put(module_states)}
+
+                # Install weights and activate the mapping in one call per
+                # EnvRunner. Separate foreach calls could target different
+                # healthy sets as workers recover between dispatches.
+                def install_and_activate(env_runner):
+                    env_runner.set_state(new_module_state)
+                    env_runner.config.multi_agent(
+                        policy_mapping_fn=agent_to_module_mapping_fn,
+                        policies_to_train=_trainable_policies,
+                    )
 
                 algorithm.env_runner_group.foreach_env_runner(
-                    lambda env_runner: env_runner.config.multi_agent(
-                        policy_mapping_fn=agent_to_module_mapping_fn,
-                        # This setting doesn't really matter for EnvRunners (no
-                        # training going on there, but we'll update this as well
-                        # here for good measure).
-                        policies_to_train=_trainable_policies,
-                    ),
+                    install_and_activate,
                     local_env_runner=True,
                 )
                 # Set all Learner workers' should_module_be_updated to the new
