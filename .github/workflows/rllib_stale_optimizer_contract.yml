@@ -23,6 +23,7 @@ jobs:
           python -m py_compile ci/rllib_real_adam_partial_restore.py
           python ci/rllib_stale_optimizer_transaction_contract.py
           python ci/rllib_real_adam_partial_restore.py
+          python ci/rllib_same_version_distinct_adam_history.py
       - name: Extract pinned unmodified RLlib PR source
         run: |
           git fetch --no-tags --depth=1 https://github.com/lindicaphxag-tech/ray.git c8ce9ca7c0ba7b2a15e002b139ff38b99895fbb8
@@ -31,3 +32,4 @@ jobs:
         run: |
           python ci/rllib_stale_optimizer_transaction_contract.py /tmp/rllib_learner_unmodified.py --baseline
           python ci/rllib_real_adam_partial_restore.py /tmp/rllib_learner_unmodified.py --baseline
+          python ci/rllib_same_version_distinct_adam_history.py /tmp/rllib_learner_unmodified.py
