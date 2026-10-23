@@ -120,6 +120,27 @@ def install_batch_provenance(learner):
                 import torch
                 original_params=[p for group in _optimizer.param_groups
                                  for p in group["params"]]
+                # Storage alias audit: moment buffers must not share mutable
+                # storage with live parameters, gradients, or each other.
+                storages={}
+                def add_storage(label,tensor):
+                    if isinstance(tensor,torch.Tensor):
+                        ptr=tensor.untyped_storage().data_ptr()
+                        storages.setdefault(ptr,[]).append(label)
+                for i,p in enumerate(original_params):
+                    label=named.get(id(p),f"#{i}")
+                    add_storage(f"weight:{label}",p)
+                    add_storage(f"gradient:{label}",p.grad)
+                    for field,value in _optimizer.state.get(p,{}).items():
+                        add_storage(f"state:{label}:{field}",value)
+                shared_storages=[
+                    names for names in storages.values() if len(names)>1]
+                hook_counts={
+                    "pre":len(_optimizer._optimizer_step_pre_hooks),
+                    "post":len(_optimizer._optimizer_step_post_hooks),
+                    "global_pre":len(torch.optim.Optimizer._optimizer_step_pre_hooks)
+                        if hasattr(torch.optim.Optimizer,"_optimizer_step_pre_hooks") else 0,
+                }
                 clone_params=[torch.nn.Parameter(p.detach().clone())
                               for p in original_params]
                 offset=0
@@ -148,6 +169,8 @@ def install_batch_provenance(learner):
                     "optimizer":_name,"parameter_grads":state,
                     "independent_adam_replay_max_abs_error":max(diffs.values()),
                     "per_param_replay_errors":diffs,
+                    "shared_mutable_storage":shared_storages,
+                    "optimizer_step_hooks":hook_counts,
                 })
                 return output
             optimizer.step=audited_step
