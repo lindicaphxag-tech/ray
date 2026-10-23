@@ -193,6 +193,33 @@ def main():
                           "healthy_after_fresh_rpc":count_after_ping,
                           "failure_sample":failures[0]}),flush=True)
         assert manager.num_outstanding_async_reqs()==0
+
+        # Recover after real physical Learner death by recreating the entire
+        # DDP LearnerGroup, not replaying a checkpoint into a partial group.
+        group.shutdown()
+        group=None
+        replacement=config.build_learner_group(env=env)
+        group=replacement
+        assert replacement._worker_manager.num_actors()==2
+        replacement.set_state(copy.deepcopy(baseline))
+        replaced_models=all_model_states(replacement)
+        assert maximum_error(*replaced_models)<1e-6
+        recovered_err=maximum_error(models0[0],replaced_models[0])
+        assert recovered_err<1e-5,recovered_err
+        print("PHYSICAL_CRASH_GROUP_REBUILT",
+              json.dumps({"new_actor_count":2,"restored_max_error":recovered_err,
+                          "peer_mismatch":maximum_error(*replaced_models)}),flush=True)
+        # Require a genuine PyTorch DDP gradient to succeed *after* rebuild.
+        return_values=replacement.update(batch=batch,async_update=False)
+        assert len(return_values)==2,return_values
+        trained=all_model_states(replacement)
+        training_delta=maximum_error(replaced_models[0],trained[0])
+        assert training_delta>0,training_delta
+        assert maximum_error(*trained)<1e-5,maximum_error(*trained)
+        print("RECOVERED_TWO_DDP_LEARNERS_TRAINED",
+              json.dumps({"batch_rows":batch.count,"max_update":training_delta,
+                          "post_gradient_peer_mismatch":maximum_error(*trained)}),
+              flush=True)
         print("TWO_LEARNER_ASYNC_LOSS_CONTRACT_PASSED",flush=True)
     finally:
         if group is not None:
