@@ -142,14 +142,17 @@ def main():
              "max_grad_update":delta,"ddp_max_weight_mismatch":maximum_error(*models1)}),
             flush=True)
         # Real LearnerGroup remote checkpoint restore after all 2 DDP jobs finish.
+        ordinary_start=time.perf_counter()
         group.set_state(copy.deepcopy(baseline))
+        ordinary_restore_ms=(time.perf_counter()-ordinary_start)*1000
         models2=all_model_states(group)
         assert maximum_error(*models2)<1e-6
         restore_error=maximum_error(models0[0],models2[0])
         assert restore_error<1e-5,restore_error
         print("TWO_DDP_LEARNERS_RESTORED",
               json.dumps({"restored_max_error":restore_error,
-                          "peer_mismatch":maximum_error(*models2)}),flush=True)
+                          "peer_mismatch":maximum_error(*models2),
+                          "ordinary_restore_ms":ordinary_restore_ms}),flush=True)
 
         # Under normal operation, require *fresh*, identity-associated
         # acknowledgements, not only a cached healthy count.
@@ -196,19 +199,24 @@ def main():
 
         # Recover after real physical Learner death by recreating the entire
         # DDP LearnerGroup, not replaying a checkpoint into a partial group.
+        recovery_start=time.perf_counter()
         group.shutdown()
         group=None
         replacement=config.build_learner_group(env=env)
         group=replacement
         assert replacement._worker_manager.num_actors()==2
         replacement.set_state(copy.deepcopy(baseline))
+        rebuild_and_restore_ms=(time.perf_counter()-recovery_start)*1000
         replaced_models=all_model_states(replacement)
         assert maximum_error(*replaced_models)<1e-6
         recovered_err=maximum_error(models0[0],replaced_models[0])
         assert recovered_err<1e-5,recovered_err
         print("PHYSICAL_CRASH_GROUP_REBUILT",
               json.dumps({"new_actor_count":2,"restored_max_error":recovered_err,
-                          "peer_mismatch":maximum_error(*replaced_models)}),flush=True)
+                          "peer_mismatch":maximum_error(*replaced_models),
+                          "rebuild_and_restore_ms":rebuild_and_restore_ms,
+                          "rebuild_over_steady_restore":
+                          rebuild_and_restore_ms/ordinary_restore_ms}),flush=True)
         # Require a genuine PyTorch DDP gradient to succeed *after* rebuild.
         return_values=replacement.update(batch=batch,async_update=False)
         assert len(return_values)==2,return_values
