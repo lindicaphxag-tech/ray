@@ -20,30 +20,22 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
           python -m pip install "ray[rllib]==2.59.0" pytest
-      - name: Install only the edited Learner source into the compatible Ray wheel
+      - name: Check wheel import without overriding unrelated Ray source modules
         run: |
           python - <<'PY'
           import ray
           from pathlib import Path
-          path = Path(ray.__file__).parent / "rllib/core/learner/learner.py"
-          assert path.is_file(), path
-          source = Path("python/ray/rllib/core/learner/learner.py").read_text()
-          path.write_text(source)
-          print("Patched actual imported wheel module:", path)
+          print("Ray wheel path:", ray.__file__)
+          assert "/site-packages/" in ray.__file__
+          assert Path("python/ray/rllib/core/learner/learner.py").is_file()
           PY
-      - name: Run native TestLearner using installed Ray runtime, not source checkout
+      - name: Execute real RLlib Learner with exact fork method AST
         env:
           RAY_DISABLE_DOCKER_CPU_WARNING: "1"
           RAY_DEDUP_LOGS: "0"
           PYTHONPATH: "/tmp"
         run: |
-          cp python/ray/rllib/core/learner/tests/test_learner.py /tmp/test_learner_snapshot.py
+          cp ci/rllib_native_wheel_learner_smoke.py /tmp/
+          cp python/ray/rllib/core/learner/learner.py /tmp/candidate_learner.py
           cd /tmp
-          python - <<'PY'
-          import ray
-          import ray.rllib.core.learner.learner as learner_module
-          print("Ray installed wheel:", ray.__file__)
-          print("Native Learner patched module:", learner_module.__file__)
-          assert "/site-packages/" in ray.__file__
-          PY
-          python -m pytest test_learner_snapshot.py -q -k "stale_paired_module_optimizer or equal_version_paired_state or optimizer_only_future_version or unversioned_module_state_update or stale_module_state_does_not_downgrade"
+          python rllib_native_wheel_learner_smoke.py /tmp/candidate_learner.py
