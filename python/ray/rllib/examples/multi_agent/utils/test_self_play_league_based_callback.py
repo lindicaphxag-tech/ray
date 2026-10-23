@@ -21,6 +21,17 @@ def test_new_self_play_module_weights_are_synced_before_mapping(monkeypatch):
     algorithm = MagicMock()
     algorithm.iteration = 1
     algorithm.env_runner.module = {"main": main_module}
+
+    # Real add_module creates a separate, default-initialized local opponent.
+    # The weight installation must instead use the existing source policy.
+    new_module = MagicMock()
+    new_module.get_state.return_value = {"weights": [-1, -1, -1]}
+
+    def add_uninitialized_module(*, module_id, module_spec):
+        assert module_id == "main_1"
+        algorithm.env_runner.module[module_id] = new_module
+
+    algorithm.add_module.side_effect = add_uninitialized_module
     monkeypatch.setattr(
         callback_module.RLModuleSpec, "from_module", lambda module: object()
     )
@@ -56,6 +67,7 @@ def test_new_self_play_module_weights_are_synced_before_mapping(monkeypatch):
 
     algorithm.add_module.assert_called_once()
     algorithm.set_state.assert_called_once()
+    new_module.get_state.assert_not_called()
     assert captured_state["value"] == {"main_1": {"weights": [1, 2, 3]}}
     assert len(algorithm.env_runner_group.foreach_env_runner.call_args_list) == 1
 
