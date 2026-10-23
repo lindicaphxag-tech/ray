@@ -110,6 +110,10 @@ def main():
         for mode in ("stock_zero_copy","actor_local_owned_copy"):
             t0=time.perf_counter()
             group=cfg.build_learner_group(env=env)
+            if os.environ.get("RLLIB_PATCHED_SOURCE_FILE"):
+                from rllib_exact_optimizer_patch_loader import patch_instance
+                installed=group.foreach_learner(patch_instance)
+                assert len(installed)==2 and all(x.ok and x.get() for x in installed)
             if mode=="actor_local_owned_copy":
                 receipts=group.foreach_learner(actor_local_optimizer_ownership)
                 assert len(receipts)==2 and all(r.ok and r.get() for r in receipts)
