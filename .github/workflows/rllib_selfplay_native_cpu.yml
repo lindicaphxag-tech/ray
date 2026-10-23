@@ -31,6 +31,21 @@ jobs:
         run: |
           python -m py_compile python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py
           python -m py_compile python/ray/rllib/examples/multi_agent/utils/test_self_play_league_based_callback.py
-      - name: Run actual native test methods on checked-out Ray source
+      - name: Overlay PR callback and native tests into installed compiled Ray wheel
         run: |
-          PYTHONPATH="$PWD/python" python -m pytest -q -vv python/ray/rllib/examples/multi_agent/utils/test_self_play_league_based_callback.py
+          python - <<'PY'
+          import pathlib, shutil, ray
+          source = pathlib.Path("python/ray/rllib/examples/multi_agent/utils")
+          target = pathlib.Path(ray.__file__).resolve().parent / "rllib/examples/multi_agent/utils"
+          for filename in ("self_play_league_based_callback.py", "test_self_play_league_based_callback.py"):
+              shutil.copy2(source / filename, target / filename)
+              print("overlay", source / filename, "->", target / filename)
+          PY
+      - name: Run native RLlib callback tests with released wheel dependencies
+        run: |
+          python - <<'PY'
+          import pathlib, ray, subprocess, sys
+          test = pathlib.Path(ray.__file__).resolve().parent / "rllib/examples/multi_agent/utils/test_self_play_league_based_callback.py"
+          print("Ray", ray.__version__, "native extension", ray._raylet.__file__, "test", test, flush=True)
+          raise SystemExit(subprocess.call([sys.executable, "-m", "pytest", "-q", "-vv", str(test)]))
+          PY
