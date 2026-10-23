@@ -20,4 +20,4 @@ jobs:
       - name: Python method AST syntax
         run: python -m py_compile ci/learner_zero_version_restore_contract.py
       - name: Actual production set_state method negative-control comparison
-        run: python ci/learner_zero_version_restore_contract.py --compare
+        run: python ci/learner_zero_version_restore_contract.py --compare --require-fixed
