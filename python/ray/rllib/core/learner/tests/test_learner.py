@@ -125,7 +125,6 @@ class TestLearner(unittest.TestCase):
             )
         )
 
-
     def test_stale_paired_module_optimizer_does_not_load_optimizer(self):
         """The paired optimizer must be skipped when module weight version is stale."""
         learner = BaseTestingAlgorithmConfig().build_learner(env=self.ENV)
@@ -208,7 +207,9 @@ class TestLearner(unittest.TestCase):
         before_trainability = learner.should_module_be_updated(DEFAULT_MODULE_ID)
         self.assertTrue(before_trainability)
 
-        with mock.patch.object(learner.config, "multi_agent", wraps=learner.config.multi_agent) as configure:
+        with mock.patch.object(
+            learner.config, "multi_agent", wraps=learner.config.multi_agent
+        ) as configure:
             learner.set_state(
                 {
                     WEIGHTS_SEQ_NO: version,
@@ -218,10 +219,14 @@ class TestLearner(unittest.TestCase):
                 }
             )
             configure.assert_not_called()
-        self.assertEqual(learner.should_module_be_updated(DEFAULT_MODULE_ID), before_trainability)
+        self.assertEqual(
+            learner.should_module_be_updated(DEFAULT_MODULE_ID), before_trainability
+        )
 
         # A standalone trainability change remains a supported operation.
-        with mock.patch.object(learner.config, "multi_agent", wraps=learner.config.multi_agent) as configure:
+        with mock.patch.object(
+            learner.config, "multi_agent", wraps=learner.config.multi_agent
+        ) as configure:
             learner.set_state({"should_module_be_updated": {"main"}})
             configure.assert_called_once()
         # An independent selector-only update is allowed to change which
