@@ -35,3 +35,9 @@ jobs:
           python ci/rllib_real_adam_partial_restore.py /tmp/rllib_learner_unmodified.py --baseline
           python ci/rllib_same_version_distinct_adam_history.py /tmp/rllib_learner_unmodified.py --baseline
           python ci/rllib_optimizer_only_false_weight_publication.py /tmp/rllib_learner_unmodified.py --baseline
+      - name: Reproduce equal-version and optimizer-only flaws on pinned official master
+        run: |
+          git fetch --no-tags --depth=1 https://github.com/ray-project/ray.git fbd093c05644bc3ba1429eef1188ec85ea563158
+          git show FETCH_HEAD:python/ray/rllib/core/learner/learner.py > /tmp/rllib_learner_official_master.py
+          python ci/rllib_same_version_distinct_adam_history.py /tmp/rllib_learner_official_master.py --baseline
+          python ci/rllib_optimizer_only_false_weight_publication.py /tmp/rllib_learner_official_master.py --baseline
