@@ -35,7 +35,7 @@ exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[]
 native_set_state = symbols["set_state"]
 
 get_state = next(n for n in klass.body if isinstance(n, ast.FunctionDef) and n.name == "get_state")
-assert '"should_module_be_updated"' in ast.unparse(get_state)
+assert any(isinstance(n, ast.Constant) and n.value == "should_module_be_updated" for n in ast.walk(get_state))
 print("PASS source audit: actual get_state exports should_module_be_updated alongside version")
 
 class Module:
