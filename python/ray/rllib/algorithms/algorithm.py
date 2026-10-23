@@ -2356,6 +2356,23 @@ class Algorithm(Checkpointable, Trainable):
             )
             state_ref = ray.put(state)
 
+        # EnvRunner.get_state() does not serialize its runtime multi-agent
+        # mapping/training selectors. Snapshot these from the same local runner
+        # as the module weights so recovered actors do not resume with the
+        # original (potentially outdated) policy-routing configuration.
+        restore_mapping_fn = (
+            from_env_runner.config.policy_mapping_fn
+            if from_env_runner is not None
+            and self.config.enable_env_runner_and_connector_v2
+            and self.config.is_multi_agent
+            else None
+        )
+        restore_policies_to_train = (
+            from_env_runner.config.policies_to_train
+            if restore_mapping_fn is not None
+            else None
+        )
+
         def _sync_env_runner(er):  # noqa
             # Remove modules (new API stack only), if necessary.
             if (
@@ -2371,6 +2388,13 @@ class Algorithm(Checkpointable, Trainable):
                         er.module.add_module(mid, mod_spec.build(), override=False)
             # Now that the MultiRLModule is fixed, update the state.
             er.set_state(ray.get(state_ref))
+            # Restore routing only after the referenced modules and source
+            # weights are installed on this same EnvRunner.
+            if restore_mapping_fn is not None:
+                er.config.multi_agent(
+                    policy_mapping_fn=restore_mapping_fn,
+                    policies_to_train=restore_policies_to_train,
+                )
 
         # By default, entire local EnvRunner state is synced after restoration
         # to bring the previously failed EnvRunner up to date.
