@@ -54,3 +54,26 @@ Do not add remote per-step leases directly to official Ray PR #67131. It would i
 - [Native LearnerGroup async quiescence experiment](https://github.com/lindicaphxag-tech/ray/blob/research/rllib-state-commit-failstop-20261024/ci/rllib_native_group_async_drain.py)
 - [Previous real native concurrent gradient ticket experiment](https://github.com/lindicaphxag-tech/ray/actions/runs/39997227527)
 - [Underlying snapshot fault/ACK loss protocol](https://github.com/lindicaphxag-tech/ray/blob/research/rllib-state-commit-failstop-20261024/research/RLLIB_EPOCH_FENCED_TWO_ACTOR_20261024.md)
+
+
+## Native LearnerGroup asynchronous drain results (completed)
+
+**First green native execution:** [Actions #40002485564](https://github.com/lindicaphxag-tech/ray/actions/runs/40002485564). With actual `BaseTestingAlgorithmConfig().learners(num_learners=1)` and the real remote LearnerGroup:
+
+- `update(batch=200 rows, async_update=True)` returned zero immediately ready results and created **1 outstanding** actor request.
+- The userland wrapper froze new update submissions, drained **1** completed request by the actual `FaultTolerantActorManager.fetch_ready_async_reqs` (without calling `LearnerGroup.update` again), then restored the authoritative checkpoint by actual `LearnerGroup.set_state`.
+- Native model-state restoration max absolute error was **0** on float model parameters; the gate advanced its local epoch marker.
+- After unfreezing, a second genuine native async training step completed and moved model parameters by max absolute **0.0010000020265579224**.
+- The drain/restore stage took **761.95 ms**, including a deliberately inserted **750 ms** sleep in Ray's native pre-gradient hook. It must not be treated as normal checkpoint overhead.
+
+**Stronger fail-closed health validation:** [Actions #40002895154](https://github.com/lindicaphxag-tech/ray/actions/runs/40002895154) also passed. Same actual remote LearnerGroup path, with checkpoint error checks and `num_healthy_actors()==num_actors()` admission:
+
+- Initial async request outstanding: 1; drained: 1; authoritative model restore max error 0; another native update changed model parameters by **0.0010000020265579224**.
+- After the controlled execution, the experiment invoked the actual `FaultTolerantActorManager.set_actor_state(actor_id,False)` API to mark the remote Learner unhealthy **without physically killing the actor**, and attempted another checkpoint publish with empty outstanding queue. The wrapper correctly **raised an error and remained fenced**. Restored healthy metadata only after checking the negative case.
+- This rules out a simple unsafe 'outstanding=0 implies safe to publish' assumption *in the tested manager-health model*, but not crash-safe admission under actual actor process loss.
+
+[Live source-backed test](https://github.com/lindicaphxag-tech/ray/blob/research/rllib-state-commit-failstop-20261024/ci/rllib_native_group_async_drain.py).
+
+**Caveat:** both positive studies test **one remote Learner inside LearnerGroup**, plus a distinct previously validated 2-Actor custom coordinator experiment. Combining these studies does **not** prove a production two-remote-Learner LearnerGroup is failure-atomic. An exclusive userland gate cannot stop arbitrary out-of-band callers of `LearnerGroup.update`, `foreach_learner` or `Learner.set_state`. Group actor crash and asynchronous actor-manager retagged request loss have not been tested under real failure; such events should force authoritative rebuild, not a healthy completion claim.
+
+**Design decision supported by evidence:** Favor a group-scoped quiescence/admission API first and an optimized bounded epoch-lease mechanism only where continuous asynchronous training requires it. The true native gradient cost study found per-step remote tickets too expensive for small steps, while native queue-drain makes checkpoint boundaries testable. A maintainer review should determine whether this belongs in `LearnerGroup` and how async results are returned without loss or re-submission. This work remains a research proposal, not a published upstream implementation or a novel general distributed transaction theorem.
