@@ -1,5 +1,8 @@
 name: Ray 67329 native wheel red-green regression
 on:
+  pull_request:
+    branches:
+      - fix/rllib-envrunner-monotonic-seq-current-20261023
   push:
     branches:
       - ci/67329-native-ray259-20261023
