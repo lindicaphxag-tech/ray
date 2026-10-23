@@ -20,10 +20,8 @@ import numpy as np
 import ray
 import ray.rllib.core.learner.learner as learner_module
 from ray.rllib.core import COMPONENT_OPTIMIZER, COMPONENT_RL_MODULE, DEFAULT_MODULE_ID
-from ray.rllib.core.testing.testing_learner import (
-    BaseTestingAlgorithmConfig,
-    get_cartpole_dataset_reader,
-)
+from ray.rllib.core.testing.testing_learner import BaseTestingAlgorithmConfig
+from ray.rllib.utils.test_utils import get_cartpole_dataset_reader
 from ray.rllib.utils.metrics import WEIGHTS_SEQ_NO
 
 if len(sys.argv) not in (2, 3):
