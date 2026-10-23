@@ -29,7 +29,11 @@ jobs:
           assert "/site-packages/" in ray.__file__
           assert Path("python/ray/rllib/core/learner/learner.py").is_file()
           PY
-      - name: Execute real RLlib Learner with exact fork method AST
+      - name: Fetch unmodified Learner implementation for native red/green
+        run: |
+          git fetch --no-tags --depth=1 https://github.com/lindicaphxag-tech/ray.git c8ce9ca7c0ba7b2a15e002b139ff38b99895fbb8
+          git show FETCH_HEAD:python/ray/rllib/core/learner/learner.py > /tmp/baseline_learner.py
+      - name: Execute patched AND unmodified source on the same real Ray runtime
         env:
           RAY_DISABLE_DOCKER_CPU_WARNING: "1"
           RAY_DEDUP_LOGS: "0"
@@ -39,3 +43,4 @@ jobs:
           cp python/ray/rllib/core/learner/learner.py /tmp/candidate_learner.py
           cd /tmp
           python rllib_native_wheel_learner_smoke.py /tmp/candidate_learner.py
+          python rllib_native_wheel_learner_smoke.py /tmp/baseline_learner.py --baseline
