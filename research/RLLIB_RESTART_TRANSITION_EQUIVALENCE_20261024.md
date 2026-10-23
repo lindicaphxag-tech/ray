@@ -66,3 +66,23 @@ Do not assert a PyTorch bug, a Ray upstream production regression, general nonde
 **Prior successful results remain distinct:** [real physical actor loss and full group rebuilding with resumed gradients](https://github.com/lindicaphxag-tech/ray/actions/runs/40005461182) showed operational recovery, not numerical trajectory equivalence; [native async queue drain](https://github.com/lindicaphxag-tech/ray/actions/runs/40002895154) showed gating and no new dispatch, not this stronger property.
 
 Fork [research Draft #11](https://github.com/lindicaphxag-tech/ray/pull/11) stays separate from official still-open [Ray #67131](https://github.com/ray-project/ray/pull/67131) and [#67329](https://github.com/ray-project/ray/pull/67329). No new external merge has been claimed.
+
+
+## Distinguishing native single-Learner positive control — GREEN
+
+[Actual native Ray + pure PyTorch CI #40019900376](https://github.com/lindicaphxag-tech/ray/actions/runs/40019900376) completed **SUCCESS** with the following two separate positive controls:
+
+- Four-parameter pure CPU PyTorch `Adam(lr=.001)`, warm for three steps, deep-copy optimizer state and weights into new optimizer, then run exactly matched gradients: **next model tensor max error 0; next optimizer-buffer max error 0**. Independent 32-seed local PyTorch 2.10.0+cpu controls also yielded 32/32 exact identical next parameter results.
+- **Genuinely built single native RLlib Learner** with a 200-row CartPole batch and **12 nonempty Adam numeric buffers**: checkpoint admission model error **0** and Adam error **0**; fresh Learner after warm snapshot produced the same next-step weights (**0 error**) and Adam buffers (**0 error**) as the uninterrupted Learner. The uninterrupted step changed parameters (max absolute **0.0010013580**), so it was not an empty/no-op comparison.
+
+[Source-backed exact reproducer](https://github.com/lindicaphxag-tech/ray/blob/research/rllib-state-commit-failstop-20261024/ci/rllib_native_single_learner_warm_replay.py).
+
+**Causal update:** physical actor death is unnecessary to reproduce the 2-Learner mismatch, **and neither plain PyTorch Adam nor native single-Learner warm restore reproduces it** under the observed CPU configurations. The tested failure is concentrated in the multi-Learner DDP group/reconstruction context, not yet assigned to a particular Ray/PyTorch implementation fault. This does not prove that single-Learner is always safe.
+
+## Candidate mechanism under test: optimizer state memory ownership across Ray actors
+
+Source audit of `TorchLearner._set_optimizer_state` shows it loads per-parameter arrays using `convert_to_torch_tensor(..., device=self._device)`; Ray's CPU NumPy conversion uses `torch.from_numpy` and `.to(cpu)` often does not allocate another float32 buffer. If the source NumPy arrays are Ray object-store-backed shared buffers, an optimizer holding references to them may need a **private writable copy per Actor before applying in-place Adam updates**. This is a hypothesis, not a demonstrated bug.
+
+[Fork native two-Learner ownership ablation](https://github.com/lindicaphxag-tech/ray/blob/research/rllib-state-commit-failstop-20261024/ci/rllib_native_optimizer_ownership_causal_ablation.py) compares the unchanged native checkpoint loader with an **actor-local `copy.deepcopy` / `np.array(copy=True)`** of all optimizer state, using identical warm reference, batch, CPU DDP topology and measured next-step comparison. This is an **exploratory fork-only monkeypatch**. Do not claim it improves correctness, is maintainable upstream, or supplies transaction guarantees without an actual verified CI result.
+
+**Design go/no-go:** if the ownership arm restores next-step equivalence across repeated seeds without introducing separate cross-worker disagreement, reduce it to a small `TorchLearner._set_optimizer_state` buffer ownership fix and test GPU/CPU. Otherwise reject this hypothesis and compare DDP collective/optimizer alias topology and plugin optimizer paths, not speculation.
