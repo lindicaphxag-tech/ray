@@ -46,3 +46,17 @@ An opt-in fail-stop transaction boundary, or a true shadow-copy-and-swap strateg
 The underlying principles of two-phase state publication, fail-closed recovery, and snapshot consistency are established distributed-systems ideas. The new contribution candidate is a **specific independently reproduced RLlib failure in the presence of otherwise-correct causal-admission logic**, not a new general impossibility theorem or a measured gain in RL reward. A high-tier algorithm claim would additionally require cleanly specified writer identity, efficient cache/rule transfer, true recovery semantics, and independent end-to-end reward/throughput comparison with strong baselines.
 
 **Upstream state:** issue [ray-project/ray#67292](https://github.com/ray-project/ray/issues/67292) open; [#67131](https://github.com/ray-project/ray/pull/67131) open; this is [fork Draft #11](https://github.com/lindicaphxag-tech/ray/pull/11), not an external Merge.
+
+
+## Native gradient-step outcome (completed second run)
+
+[Successful native Ray/PyTorch Actions #39989496133](https://github.com/lindicaphxag-tech/ray/actions/runs/39989496133) now includes the missing original Ray CartPole offline fixture. With the candidate's real `Learner.set_state` injected into an actually built `BaseTestingAlgorithmConfig().build_learner(env=CartPole-v1)`:
+
+1. A deliberately modified RLModule state increased an actual floating model parameter by **0.125**, while the accepted incoming weight version advanced to **2**.
+2. `config.multi_agent` raised a controlled error *before* installing the selector; the old selector remained active.
+3. Replaying the identical version-2 complete checkpoint did **not** correct that selector because the new positive version was already installed.
+4. The real Learner processed an actual CartPole batch of **200 rows** and updated the default policy's parameters by a measured max absolute change of **0.0010000020265579224**. The delivered selector intended to exclude that default policy. Returned result keys included `__all_modules__` and `default_policy`.
+
+This is a deterministic causal **correctness** witness, not an assessment of aggregate episodic return or a generalization claim. The first native run separately confirmed steps 1–3 but could not load the CartPole dataset absent from the released wheel; the second run explicitly installed the unchanged source-tree fixture and successfully completed the training step. No production Ray code was changed by this experiment.
+
+**Recommended next external discussion:** the correct response to an exception during multi-component state installation: fail-stop and reconstruct from an authoritative committed snapshot, or provide a true staged/swap checkpoint interface. Swapping version assignment order alone cannot prevent partial writes. The review candidate is not ready to claim exception-atomicity.
