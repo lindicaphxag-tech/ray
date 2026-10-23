@@ -1,0 +1,28 @@
+name: Ray native-wheel learner zero-version integration (research)
+on:
+  push:
+    branches:
+      - ci/rllib-learner-zero-version-restore-20261023
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  released-runtime-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            python/ray/rllib/core/learner/learner.py
+            ci/learner_zero_native_wheel_validation.py
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install released compiled Ray RLlib runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install 'ray[rllib]==2.59.0' torch
+      - name: Execute actual Learner with checked-out development set_state method
+        run: python ci/learner_zero_native_wheel_validation.py
