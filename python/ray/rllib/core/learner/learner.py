@@ -1626,35 +1626,35 @@ class Learner(Checkpointable):
 
         weights_seq_no = state.get(WEIGHTS_SEQ_NO, 0)
 
-        if COMPONENT_RL_MODULE in state:
-            if weights_seq_no == 0 or self._weights_seq_no < weights_seq_no:
-                self.module.set_state(state[COMPONENT_RL_MODULE])
-                # An unversioned module-state update is still a weight mutation. Advance the
-                # sequence number so EnvRunners' pull-if-newer sync does not skip these weights.
-                if weights_seq_no == 0:
-                    self._weights_seq_no += 1
-
-        # A versioned *paired* module+optimizer snapshot is one state:
-        # if the corresponding module was not accepted (equal or stale
-        # positive sequence number), do not install its optimizer moments.
-        # Optimizer-only and unversioned restores remain independent.
-        rejected_paired_checkpoint = (
-            COMPONENT_RL_MODULE in state
-            and COMPONENT_OPTIMIZER in state
-            and 0 < weights_seq_no <= self._weights_seq_no
+        # Establish acceptance before mutating the installed version. A version
+        # is an update counter, not a globally unique state identity.
+        module_update_accepted = COMPONENT_RL_MODULE in state and (
+            weights_seq_no == 0 or self._weights_seq_no < weights_seq_no
         )
-        if COMPONENT_OPTIMIZER in state and not rejected_paired_checkpoint:
+        if module_update_accepted:
+            self.module.set_state(state[COMPONENT_RL_MODULE])
+            # A zero-version update still changes the installed model and
+            # must be visible to EnvRunners' pull-if-newer synchronization.
+            if weights_seq_no == 0:
+                self._weights_seq_no += 1
+
+        # Treat only components supplied *with rejected module weights* as
+        # a rejected bundle. Optimizer-only transfers remain independent.
+        if COMPONENT_OPTIMIZER in state and (
+            COMPONENT_RL_MODULE not in state or module_update_accepted
+        ):
             self._set_optimizer_state(state[COMPONENT_OPTIMIZER])
 
-        # Advance the advertised weight version only when the corresponding
-        # module weights were supplied. Optimizer-only / metadata-only state
-        # packets must not claim that unseen weights were installed.
-        if COMPONENT_RL_MODULE in state and weights_seq_no > self._weights_seq_no:
+        # Never publish a weight version before installing those weights.
+        if module_update_accepted and weights_seq_no > 0:
             self._weights_seq_no = weights_seq_no
 
-        # Update our trainable Modules information/function via our config.
-        # If not provided in state (None), all Modules will be trained by default.
-        if "should_module_be_updated" in state:
+        # A state bundle's training selector determines which installed
+        # weights are optimized next: do not import a rejected module's
+        # selector. Selector-only updates are intentionally independent.
+        if "should_module_be_updated" in state and (
+            COMPONENT_RL_MODULE not in state or module_update_accepted
+        ):
             self.config.multi_agent(policies_to_train=state["should_module_be_updated"])
 
         # TODO (sven): Make `MetricsLogger` a Checkpointable.
