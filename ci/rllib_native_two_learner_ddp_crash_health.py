@@ -14,7 +14,7 @@ import time
 import gymnasium as gym
 import numpy as np
 import ray
-from ray.rllib.core import COMPONENT_LEARNER, COMPONENT_RL_MODULE, DEFAULT_MODULE_ID
+from ray.rllib.core import COMPONENT_LEARNER, COMPONENT_RL_MODULE, COMPONENT_OPTIMIZER, DEFAULT_MODULE_ID
 from ray.rllib.core.testing.testing_learner import BaseTestingAlgorithmConfig
 from ray.rllib.utils.test_utils import get_cartpole_dataset_reader
 
@@ -41,6 +41,42 @@ def maximum_error(a,b):
 
 def all_model_states(group):
     return [r.get() for r in group.foreach_learner(model_state)]
+
+
+def optimizer_numeric_leaves(snapshot):
+    """Numeric optimizer buffers from one real Learner; no metrics or weights."""
+    state=snapshot[COMPONENT_LEARNER][COMPONENT_OPTIMIZER]
+    leaves={}
+    def walk(value,path):
+        if isinstance(value,dict):
+            for k,v in value.items():
+                walk(v,path+(str(k),))
+        elif isinstance(value,(tuple,list)):
+            for i,v in enumerate(value):
+                walk(v,path+(str(i),))
+        else:
+            arr=np.asarray(value)
+            if arr.size and arr.dtype.kind in "biufc":
+                leaves["/".join(path)]=arr.copy()
+    for name,optimizer in state.items():
+        # Explicitly include *only* optimizer moment/step dictionaries:
+        # param_groups scalar hyperparameters are not proof of warm state.
+        buffers=optimizer["state"]["state"]
+        assert buffers,("empty Adam moments",name)
+        walk(buffers,(str(name),"state"))
+    assert leaves,"no numeric optimizer buffer state found"
+    return leaves
+
+
+def checked_optimizer_error(a,b,*,atol=1e-6,rtol=1e-5):
+    assert a.keys()==b.keys(),(a.keys()-b.keys(),b.keys()-a.keys())
+    max_delta=0.0
+    for k in a:
+        av,bv=np.asarray(a[k]),np.asarray(b[k])
+        np.testing.assert_allclose(bv,av,atol=atol,rtol=rtol,err_msg=k)
+        max_delta=max(max_delta,float(np.max(np.abs(
+            av.astype(np.float64)-bv.astype(np.float64)))))
+    return max_delta
 
 
 def fresh_membership_attestation(group,expected_ids):
@@ -154,6 +190,32 @@ def main():
                           "peer_mismatch":maximum_error(*models2),
                           "ordinary_restore_ms":ordinary_restore_ms}),flush=True)
 
+        # Strengthen the recovery test: the checkpoint must include warmed
+        # Adam optimizer moments from a genuine earlier gradient step.
+        warm=group.update(batch=batch,async_update=False)
+        assert len(warm)==2
+        warm_checkpoint=copy.deepcopy(group.get_state())
+        warm_models=all_model_states(group)
+        warm_optimizer=optimizer_numeric_leaves(warm_checkpoint)
+        # Counterfactual: uninterrupted continuation from the warm checkpoint.
+        healthy_continuation=group.update(batch=batch,async_update=False)
+        assert len(healthy_continuation)==2
+        reference_next_models=all_model_states(group)
+        reference_next_optimizer=optimizer_numeric_leaves(group.get_state())
+        assert maximum_error(warm_models[0],reference_next_models[0])>0
+        # Restore the *same warmed checkpoint* before the actor death.
+        group.set_state(copy.deepcopy(warm_checkpoint))
+        assert maximum_error(warm_models[0],all_model_states(group)[0])<1e-6
+        optimizer_rewind_error=checked_optimizer_error(
+            warm_optimizer,optimizer_numeric_leaves(group.get_state()))
+        print("WARM_ADAM_CHECKPOINT_REWIND",
+              json.dumps({"optimizer_buffers":len(warm_optimizer),
+                          "optimizer_restore_max_error":optimizer_rewind_error,
+                          "reference_update_delta":maximum_error(
+                              warm_models[0],reference_next_models[0])}),flush=True)
+        baseline=warm_checkpoint
+        models0=warm_models
+
         # Under normal operation, require *fresh*, identity-associated
         # acknowledgements, not only a cached healthy count.
         ids=manager.actor_ids()
@@ -241,6 +303,15 @@ def main():
         training_delta=maximum_error(replaced_models[0],trained[0])
         assert training_delta>0,training_delta
         assert maximum_error(*trained)<1e-5,maximum_error(*trained)
+        trajectory_error=maximum_error(reference_next_models[0],trained[0])
+        assert trajectory_error<1e-5,trajectory_error
+        recovered_optimizer=optimizer_numeric_leaves(replacement.get_state())
+        optimizer_trajectory_error=checked_optimizer_error(
+            reference_next_optimizer,recovered_optimizer)
+        print("WARM_ADAM_POST_CRASH_CONTINUATION_EQUIVALENCE",
+              json.dumps({"model_next_step_error":trajectory_error,
+                          "optimizer_next_step_error":optimizer_trajectory_error,
+                          "optimizer_buffers":len(recovered_optimizer)}),flush=True)
         print("RECOVERED_TWO_DDP_LEARNERS_TRAINED",
               json.dumps({"batch_rows":batch.count,"max_update":training_delta,
                           "post_gradient_peer_mismatch":maximum_error(*trained)}),
