@@ -56,8 +56,10 @@ class TestAlgorithm(unittest.TestCase):
                 self[module_id] = module
 
         source = MagicMock()
+
         def mapping_fn(*args, **kwargs):
             return "league_1"
+
         source.config = SimpleNamespace(
             policy_mapping_fn=mapping_fn,
             policies_to_train={"main", "league_1"},
@@ -82,9 +84,7 @@ class TestAlgorithm(unittest.TestCase):
         group = MagicMock()
         group.local_env_runner = source
         group.probe_unhealthy_env_runners.return_value = [2]
-        group.foreach_env_runner.side_effect = (
-            lambda func, **kwargs: [func(restored)]
-        )
+        group.foreach_env_runner.side_effect = lambda func, **kwargs: [func(restored)]
 
         algorithm = MagicMock()
         algorithm.env_runner = source
@@ -111,9 +111,7 @@ class TestAlgorithm(unittest.TestCase):
         self.assertIn("league_1", restored.module)
         self.assertEqual([kind for kind, _ in events], ["weights", "mapping"])
         self.assertIs(events[1][1]["policy_mapping_fn"], mapping_fn)
-        self.assertEqual(
-            events[1][1]["policies_to_train"], {"main", "league_1"}
-        )
+        self.assertEqual(events[1][1]["policies_to_train"], {"main", "league_1"})
         self.assertEqual(algorithm._counters["total_num_restored_workers"], 1)
 
     def test_add_module_and_remove_module(self):
