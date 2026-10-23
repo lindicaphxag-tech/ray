@@ -69,3 +69,13 @@ jobs:
           cd /tmp
           python -m pytest -q test_ray_optimizer_owned_checkpoint.py
           echo "PATCHED_RAY_OWNERSHIP_REGRESSION_GREEN_CONFIRMED"
+      - name: Patched real two-Learner CPU DDP next-step trajectory must match exactly
+        env:
+          RLLIB_ASSERT_PATCHED_NATIVE_PARITY: '1'
+        run: |
+          python -m py_compile ci/rllib_native_two_learner_ddp_crash_health.py ci/rllib_native_optimizer_ownership_causal_ablation.py
+          cp ci/rllib_native_two_learner_ddp_crash_health.py /tmp/
+          cp ci/rllib_native_optimizer_ownership_causal_ablation.py /tmp/
+          cd /tmp
+          timeout 600s python -u rllib_native_optimizer_ownership_causal_ablation.py
+
