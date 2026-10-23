@@ -16,7 +16,8 @@ from pathlib import Path
 from types import SimpleNamespace
 import torch
 
-path=Path(sys.argv[1]) if len(sys.argv)>1 else Path("python/ray/rllib/core/learner/learner.py")
+path=Path(sys.argv[1]) if len(sys.argv)>1 and not sys.argv[1].startswith("--") else Path("python/ray/rllib/core/learner/learner.py")
+baseline="--baseline" in sys.argv
 tree=ast.parse(path.read_text(),filename=str(path))
 cls=next(x for x in tree.body if isinstance(x,ast.ClassDef) and x.name=="Learner")
 node=copy.deepcopy(next(x for x in cls.body if isinstance(x,ast.FunctionDef) and x.name=="set_state"))
@@ -72,8 +73,12 @@ native_set_state(local,remote_snap)
 actual_params=local.parameter.detach()
 actual_moments=local.optimizer.state_dict()["state"][0]["exp_avg"]
 assert torch.equal(actual_params,local_snap["module"]["parameter"])
-assert torch.equal(actual_moments,remote_snap["optimizer"]["state"][0]["exp_avg"])
-print("REPRODUCED: equal seq=10 skips incoming module but applies unrelated remote Adam moments")
+if baseline:
+    assert torch.equal(actual_moments,remote_snap["optimizer"]["state"][0]["exp_avg"])
+    print("EXPECTED BASELINE: equal seq=10 skips module but loads unrelated remote Adam moments")
+else:
+    assert torch.equal(actual_moments,local_snap["optimizer"]["state"][0]["exp_avg"])
+    print("PASS PATCH: equal seq=10 preserves both local module and local Adam moments")
 
 # Construct a matched reference and quantify the update discrepancy.
 matched=Learner()
@@ -83,9 +88,10 @@ matched._weights_seq_no=10
 local.step([2.6,.7])
 matched.step([2.6,.7])
 delta=float(torch.linalg.vector_norm(local.parameter-matched.parameter))
-assert delta>1e-5,delta
-print(f"REPRODUCED: equal-version mixed checkpoint changes next Adam update; L2={delta:.12f}")
-
-# This proof holds for both the earlier unpatched production method and the
-# narrow strict-stale guard. A sequence number is not a global state identity.
-print("BOUNDARY: strict-stale paired guard does not cover equal-version foreign history")
+if baseline:
+    assert delta>1e-5,delta
+    print(f"EXPECTED BASELINE: same-version partial restore changes next Adam update; L2={delta:.12f}")
+else:
+    assert delta<1e-12,delta
+    print(f"PASS PATCH: same-version complete rejection preserves exact next update (L2={delta:.12f})")
+print("INTERPRETATION: version labels are not unique state identities across independent learners")
