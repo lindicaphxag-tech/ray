@@ -114,8 +114,42 @@ def install_batch_provenance(learner):
                                               grad.tobytes()).hexdigest(),
                                           "gradient_l1":float(np.sum(
                                               np.abs(grad.astype(np.float64))))})
-                consumed.append({"optimizer":_name,"parameter_grads":state})
-                return _step(*args,**kwargs)
+                # Independent same-process Adam replay: clone the live tensors,
+                # copy optimizer state and consumed .grad, and execute the
+                # *same installed PyTorch optimizer class*. No Ray state writes.
+                import torch
+                original_params=[p for group in _optimizer.param_groups
+                                 for p in group["params"]]
+                clone_params=[torch.nn.Parameter(p.detach().clone())
+                              for p in original_params]
+                offset=0
+                clone_groups=[]
+                for group in _optimizer.param_groups:
+                    length=len(group["params"])
+                    cloned={key:copy.deepcopy(value) for key,value in group.items()
+                            if key!="params"}
+                    cloned["params"]=clone_params[offset:offset+length]
+                    clone_groups.append(cloned)
+                    offset+=length
+                assert offset==len(clone_params)
+                isolated=type(_optimizer)(clone_groups)
+                isolated.load_state_dict(copy.deepcopy(_optimizer.state_dict()))
+                for source,target in zip(original_params,clone_params):
+                    target.grad=(None if source.grad is None
+                                 else source.grad.detach().clone())
+                isolated.step()
+                output=_step(*args,**kwargs)
+                diffs={}
+                for source,target in zip(original_params,clone_params):
+                    name=named.get(id(source),"<UNBOUND>")
+                    diffs[name]=float(torch.max(
+                        torch.abs(source.detach()-target.detach())).item())
+                consumed.append({
+                    "optimizer":_name,"parameter_grads":state,
+                    "independent_adam_replay_max_abs_error":max(diffs.values()),
+                    "per_param_replay_errors":diffs,
+                })
+                return output
             optimizer.step=audited_step
             originals.append((optimizer,step))
         try:
