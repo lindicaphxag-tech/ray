@@ -19,6 +19,8 @@ import pathlib
 import sys
 import time
 from contextlib import suppress
+from unittest.mock import patch
+from ray.rllib.utils.test_utils import get_cartpole_dataset_reader
 
 import gymnasium as gym
 import numpy as np
@@ -79,6 +81,7 @@ class EpochAuthority:
         self.pending=None
         self.fenced=True
         self.active={}
+        self.inside_gradient=set()
         self.next_ticket=0
 
     def acquire(self,epoch):
@@ -88,8 +91,13 @@ class EpochAuthority:
         self.active[self.next_ticket]=epoch
         return self.next_ticket
 
+    def gradient_entered(self,ticket):
+        assert ticket in self.active
+        self.inside_gradient.add(ticket)
+
     def release(self,ticket):
         assert ticket in self.active,ticket
+        self.inside_gradient.discard(ticket)
         del self.active[ticket]
 
     def bootstrap(self,epoch):
@@ -132,7 +140,8 @@ class EpochAuthority:
 
     def snapshot(self):
         return {"live_epoch":self.live_epoch,"pending":self.pending,
-                "fenced":self.fenced,"inflight":len(self.active)}
+                "fenced":self.fenced,"inflight":len(self.active),
+                "inside_gradient":len(self.inside_gradient)}
 
 
 @ray.remote(num_cpus=1)
@@ -240,6 +249,40 @@ class FencedNativeLearner:
         self.held_ticket=None
         return {"actor":self.rank,"result":"LEASE_RELEASED"}
 
+    def real_gradient_update_under_lease(self):
+        """Exercise actual native Learner.update while holding the central lease.
+
+        A brief pause inside the native before_gradient_based_update hook makes
+        the interleaving reproducible; parameter updates still run normally.
+        """
+        assert self.train_allowed and not self.quarantined
+        assert self.learner.should_module_be_updated(DEFAULT_MODULE_ID)
+        ticket=ray.get(self.authority.acquire.remote(self.epoch))
+        assert ticket is not None
+        try:
+            before=self.learner.get_state()[COMPONENT_RL_MODULE][DEFAULT_MODULE_ID]
+            before={k:np.asarray(v).copy() for k,v in before.items()
+                    if np.issubdtype(np.asarray(v).dtype,np.floating)}
+            reader=get_cartpole_dataset_reader(batch_size=32)
+            batch=self.learner._convert_batch_type(reader.next().as_multi_agent())
+            calls=[0]
+            def hook(*, timesteps):
+                calls[0]+=1
+                ray.get(self.authority.gradient_entered.remote(ticket))
+                time.sleep(1.0)
+            with patch.object(self.learner,"before_gradient_based_update",side_effect=hook):
+                self.learner.update(batch=batch)
+            assert calls[0]>=1,"native before-gradient hook was not called"
+            after=self.learner.get_state()[COMPONENT_RL_MODULE][DEFAULT_MODULE_ID]
+            differences=[float(np.max(np.abs(np.asarray(after[k])-v)))
+                         for k,v in before.items()]
+            max_change=max(differences)
+            assert max_change>0,max_change
+            return {"actor":self.rank,"rows":batch.count,
+                    "max_param_change":max_change,"hook_calls":calls[0]}
+        finally:
+            ray.get(self.authority.release.remote(ticket))
+
     def train_probe(self):
         # Every wrapper-mediated train call holds a central ticket while
         # making its policy decision. Real Learner.update() is not yet
@@ -299,6 +342,37 @@ def run():
         intended[WEIGHTS_SEQ_NO]=2
         intended[COMPONENT_RL_MODULE]=mutate_first_weight(authoritative[COMPONENT_RL_MODULE])
         intended["should_module_be_updated"]={"blocked_other_policy"}
+
+        # Actual Ray Learner.update in actor 0 acquires a central ticket.
+        # Wait for the *native* gradient hook, then concurrently attempt a
+        # checkpoint publish while the real update is paused inside its hook.
+        future=actors[0].real_gradient_update_under_lease.remote()
+        deadline=time.monotonic()+35
+        while time.monotonic()<deadline:
+            gate=ray.get(authority.snapshot.remote())
+            if gate["inside_gradient"]>0:
+                break
+            if ray.wait([future],timeout=0)[0]:
+                ray.get(future)  # surface a native Ray/gradient failure
+                raise AssertionError("real update completed before overlap hook")
+            time.sleep(0.025)
+        else:
+            raise AssertionError("native gradient hook never entered")
+        try:
+            ray.get(authority.begin.remote(2))
+        except ray.exceptions.RayTaskError as exc:
+            assert "in-flight training lease" in str(exc),str(exc)
+        else:
+            raise AssertionError("checkpoint began while real gradient was executing")
+        gradient_result=ray.get(future)
+        assert gradient_result["max_param_change"]>0
+        assert ray.get(authority.snapshot.remote())["inflight"]==0
+        # Genuine policy parameters changed; rebuild the authoritative e1
+        # checkpoint to leave the existing cross-actor protocol probes intact.
+        ray.get(actors[0].restore.remote(authoritative,1))
+        ray.get(actors[0].resume_recovered.remote(1))
+        assert_same(actors,1,True)
+        print("REAL_GRADIENT_LEASE_FENCED",json.dumps(gradient_result),flush=True)
 
         # Hold an in-flight training lease while the coordinator attempts
         # an update: begin() MUST refuse instead of racing with a reader.
