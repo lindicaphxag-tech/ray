@@ -69,6 +69,8 @@ class UserlandEpochFence:
                     raise RuntimeError(f"Learner async update failed: {res.get()}")
                 drained+=1
         assert manager.num_outstanding_async_reqs()==0
+        if manager.num_healthy_actors()!=manager.num_actors():
+            raise RuntimeError("checkpoint publication denied: unhealthy Learner actor")
         # Only now is it safe to call real LearnerGroup.set_state from THIS
         # userland wrapper. Independent group callers could still race.
         self.group.set_state(copy.deepcopy(authoritative))
@@ -146,6 +148,24 @@ def main():
         print("REAL_GROUP_ASYNC_TRAINED",
               json.dumps({"completed":count,"max_parameter_change":delta,
                           "batch_rows":batch.count}),flush=True)
+        # Deterministic fault in the *real actor manager health metadata*.
+        # A zero outstanding count after actor loss must never be mistaken
+        # for a fully committed checkpoint. This is not a real actor crash.
+        manager=group._worker_manager
+        ids=manager.actor_ids()
+        assert len(ids)==1
+        manager.set_actor_state(ids[0],False)
+        fence.frozen=True
+        try:
+            fence.drain_and_restore(initial)
+        except RuntimeError as exc:
+            assert "unhealthy Learner" in str(exc),str(exc)
+        else:
+            raise AssertionError("checkpoint published with missing healthy actor")
+        assert fence.frozen
+        manager.set_actor_state(ids[0],True)
+        print("GROUP_HEALTH_FAIL_CLOSED: missing Learner health ACK prevented restore",
+              flush=True)
         print("ACTUAL_RLLIB_LEARNERGROUP_ASYNC_QUIESCENCE_PASSED",flush=True)
     finally:
         if group is not None:
