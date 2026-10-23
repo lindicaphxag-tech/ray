@@ -1,0 +1,29 @@
+name: RLlib trainable-policy lineage contract (CPU)
+on:
+  push:
+    branches:
+      - research/rllib-trainable-policy-state-coherence-20261023
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  selector-lineage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile actual production and contract
+        run: |
+          python -m py_compile python/ray/rllib/core/learner/learner.py
+          python -m py_compile ci/rllib_stale_training_selector_contract.py
+      - name: Verify new source-level invariants against candidate
+        run: python ci/rllib_stale_training_selector_contract.py
+      - name: Retrieve exact prior two-file patch as negative control
+        run: |
+          git fetch --no-tags --depth=1 origin c31c743e3faf4d304e96e0da158ceee34d3f1a54
+          git show FETCH_HEAD:python/ray/rllib/core/learner/learner.py > /tmp/rllib_learner_previous_minimal.py
+      - name: Reproduce stale trainable-selector corruption from previous candidate
+        run: python ci/rllib_stale_training_selector_contract.py /tmp/rllib_learner_previous_minimal.py --baseline
