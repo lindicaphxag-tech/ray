@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+import secrets
 import time
 
 import gymnasium as gym
@@ -40,6 +41,33 @@ def maximum_error(a,b):
 
 def all_model_states(group):
     return [r.get() for r in group.foreach_learner(model_state)]
+
+
+def fresh_membership_attestation(group,expected_ids):
+    """Return a per-call membership ACK from actual managed Ray actors.
+
+    This is a liveness challenge at a point in time, NOT a durable lease,
+    cryptographic identity proof or full commit barrier.
+    """
+    manager=group._worker_manager
+    assert manager.num_outstanding_async_reqs()==0
+    nonce=secrets.token_hex(12)
+    call=group.foreach_learner(
+        lambda learner, challenge=nonce: {
+            "nonce":challenge,
+            "module_ids":sorted(learner.module.keys()),
+        },
+        healthy_only=False,timeout_seconds=10)
+    responses=list(call)
+    response_ids={r.actor_id for r in responses}
+    bad=[str(r.get())[:180] for r in responses if not r.ok]
+    if (len(responses)!=len(expected_ids) or response_ids!=set(expected_ids)
+            or bad or any(r.get().get("nonce")!=nonce for r in responses if r.ok)):
+        raise RuntimeError(
+            "fresh membership ACK failed: ids="
+            +repr(sorted(response_ids))+" errors="+repr(bad))
+    return {"ids":sorted(response_ids),"acks":len(responses),
+            "challenge":nonce,"module_ids":responses[0].get()["module_ids"]}
 
 
 class ExclusiveUserlandGate:
@@ -123,8 +151,14 @@ def main():
               json.dumps({"restored_max_error":restore_error,
                           "peer_mismatch":maximum_error(*models2)}),flush=True)
 
-        # True Ray actor termination: health can be stale until a fresh RPC.
+        # Under normal operation, require *fresh*, identity-associated
+        # acknowledgements, not only a cached healthy count.
         ids=manager.actor_ids()
+        live=fresh_membership_attestation(group,ids)
+        assert live["acks"]==2
+        print("FRESH_GROUP_PREPARE_ACKS",json.dumps(live),flush=True)
+
+        # True Ray actor termination: health can be stale until a fresh RPC.
         target=manager._actors[ids[0]]
         ray.kill(target,no_restart=True)
         killed=True
@@ -135,8 +169,19 @@ def main():
                           "healthy_cached":healthy_before_ping,
                           "total":manager.num_actors()}),flush=True)
         assert count_at_loss==0
+        # Cached health+empty queue appear safe, but a NEW participation
+        # challenge MUST fail and prevent attempting checkpoint publication.
+        assert healthy_before_ping==manager.num_actors(),healthy_before_ping
+        try:
+            fresh_membership_attestation(group,ids)
+        except RuntimeError as error:
+            assert "fresh membership ACK failed" in str(error),str(error)
+            print("FRESH_GROUP_ACK_FENCED_DEAD_ACTOR",str(error)[:350],flush=True)
+        else:
+            raise AssertionError("dead Ray actor erroneously authenticated")
 
-        # Send a real manager RPC to both actors; one must report RayActorError.
+        # Send another real manager RPC (despite health being marked failed)
+        # to confirm the actor-loss error is independently observable.
         calls=group.foreach_learner(lambda learner: learner.get_state(),
                                     healthy_only=False,timeout_seconds=12)
         failures=[str(call.get())[:240] for call in calls if not call.ok]
