@@ -43,6 +43,10 @@ jobs:
           WHEEL_TEST="$(python -c 'import ray, pathlib; print(pathlib.Path(ray.__file__).resolve().parent / "rllib/env/tests/test_multi_agent_env_runner.py")')"
           echo "Native wheel test: $WHEEL_TEST"
           (cd /tmp && python -m pytest -q -s --disable-warnings "$WHEEL_TEST" -k test_set_state_stale_version_preserves_newer_weights_sequence)
+      - name: Native full MultiAgentEnvRunner regression suite (6 tests)
+        run: |
+          WHEEL_TEST="$(python -c 'import ray, pathlib; print(pathlib.Path(ray.__file__).resolve().parent / "rllib/env/tests/test_multi_agent_env_runner.py")')"
+          (cd /tmp && timeout 540s python -m pytest -q --disable-warnings "$WHEEL_TEST")
       - name: Reproduce exact original-version failure in same wheel
         run: |
           python - <<'PY'
