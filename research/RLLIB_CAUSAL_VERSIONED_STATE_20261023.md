@@ -106,3 +106,36 @@ asynchronous RL schemes before originality or L9 claims are justified.
 
 Do not mix this proposed change into Ray #67131 without maintainer
 agreement; it is a separate checkpoint semantics question.
+
+
+## Upgraded evidence: native TestLearner and bounded exhaustive sequencing
+
+2026-10-23. Three methods from the checkout's original `test_learner.py` native
+TestLearner class were executed unchanged in Ray 2.59.0 with actual RLModule
+state methods: the unmodified production method failed all three, and the
+minimal patch passed all three. The two variants used the same native tests.
+[Native red/green GitHub Actions](https://github.com/lindicaphxag-tech/ray/actions/runs/39911970229).
+
+A further bounded transition enumeration used 27 types of incoming packets,
+including paired module/optimizer states from independent writers, module-only,
+optimizer-only, and metadata-only messages with versions 0..3. All 20,439
+possible ordered traces of lengths one through three were checked against
+production `Learner.set_state` with controlled state holders. The minimal
+patch yielded **zero violations of the specified causal admission and version
+publication properties**. The old #67131 head failed two invariant classes;
+the unchanged official Ray master commit `fbd093c` failed four invariant classes.
+[Bounded proof experiment CI](https://github.com/lindicaphxag-tech/ray/actions/runs/39912446609).
+
+This is bounded enumeration of sequential calls, not a proof over arbitrary
+concurrency, network faults, failures during setters, or distributed ACKs.
+Real Adam regressions and actual wheel-native TestLearner methods are separate
+independent evidence. These tests do not establish an improvement in RL reward.
+
+Both reviewed production and native-test files on
+[the two-file minimal branch](https://github.com/lindicaphxag-tech/ray/compare/fix/rllib-version-unversioned-set-state-20261018...review/rllib-causal-paired-state-minimal-20261023)
+have matching Git blob SHA values on the research test branch; no synthetic
+proof scripts are part of the minimal patch.
+
+Maintainer approval of equal-version authoritative restore semantics and
+failure handling remains pending. #67131 also still has a failing Microcheck,
+so no merge-ready or externally accepted claim follows from these CI results.
