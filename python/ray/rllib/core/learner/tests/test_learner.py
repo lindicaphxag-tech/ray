@@ -194,6 +194,40 @@ class TestLearner(unittest.TestCase):
         )
         self.assertEqual(learner.get_state()[WEIGHTS_SEQ_NO], version + 1)
 
+    def test_stale_snapshot_cannot_replace_trainable_policy_selection(self):
+        """Stale model state and its trainability selector must be rejected together."""
+        learner = BaseTestingAlgorithmConfig().build_learner(env=self.ENV)
+        initial = learner.get_state()
+        # Publish one real module update so the stale checkpoint is unambiguous.
+        learner.set_state({COMPONENT_RL_MODULE: initial[COMPONENT_RL_MODULE]})
+        current = learner.get_state()
+        version = current[WEIGHTS_SEQ_NO]
+        self.assertGreater(version, 0)
+        # This is the actual Learner update-path decision, not a mocked
+        # inference about what the configuration setter would have done.
+        before_trainability = learner.should_module_be_updated(DEFAULT_MODULE_ID)
+        self.assertTrue(before_trainability)
+
+        with mock.patch.object(learner.config, "multi_agent", wraps=learner.config.multi_agent) as configure:
+            learner.set_state(
+                {
+                    WEIGHTS_SEQ_NO: version,
+                    COMPONENT_RL_MODULE: initial[COMPONENT_RL_MODULE],
+                    COMPONENT_OPTIMIZER: initial[COMPONENT_OPTIMIZER],
+                    "should_module_be_updated": {"stale_opponent"},
+                }
+            )
+            configure.assert_not_called()
+        self.assertEqual(learner.should_module_be_updated(DEFAULT_MODULE_ID), before_trainability)
+
+        # A standalone trainability change remains a supported operation.
+        with mock.patch.object(learner.config, "multi_agent", wraps=learner.config.multi_agent) as configure:
+            learner.set_state({"should_module_be_updated": {"main"}})
+            configure.assert_called_once()
+        # An independent selector-only update is allowed to change which
+        # actual module the next Learner update considers trainable.
+        self.assertFalse(learner.should_module_be_updated(DEFAULT_MODULE_ID))
+
     def test_end_to_end_update(self):
         """Tests the end-to-end update process for a single-agent scenario.
 
