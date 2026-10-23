@@ -1634,15 +1634,16 @@ class Learner(Checkpointable):
                 if weights_seq_no == 0:
                     self._weights_seq_no += 1
 
-        # A stale *paired* module+optimizer checkpoint must not replace
-        # optimizer moments after the matching module weights were rejected.
-        # Optimizer-only and unversioned state updates remain independent.
-        stale_paired_checkpoint = (
+        # A versioned *paired* module+optimizer snapshot is one state:
+        # if the corresponding module was not accepted (equal or stale
+        # positive sequence number), do not install its optimizer moments.
+        # Optimizer-only and unversioned restores remain independent.
+        rejected_paired_checkpoint = (
             COMPONENT_RL_MODULE in state
             and COMPONENT_OPTIMIZER in state
-            and 0 < weights_seq_no < self._weights_seq_no
+            and 0 < weights_seq_no <= self._weights_seq_no
         )
-        if COMPONENT_OPTIMIZER in state and not stale_paired_checkpoint:
+        if COMPONENT_OPTIMIZER in state and not rejected_paired_checkpoint:
             self._set_optimizer_state(state[COMPONENT_OPTIMIZER])
 
         # Keep the sequence monotonic: stale state must not downgrade the version of newer weights.
