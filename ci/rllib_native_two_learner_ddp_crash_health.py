@@ -90,7 +90,39 @@ def install_batch_provenance(learner):
             name:hashlib.sha256(p.detach().cpu().numpy().tobytes()).hexdigest()
             for name,p in learner.module[DEFAULT_MODULE_ID].named_parameters()
         }
-        output=original_apply(gradients_dict)
+        # Record what torch.optim.Adam ACTUALLY consumes at optimizer.step,
+        # as distinct from gradients passed into Learner.apply_gradients.
+        # Do not alter the optimizer's own step logic.
+        consumed=[]
+        originals=[]
+        named={id(p):n for n,p in learner.module[DEFAULT_MODULE_ID].named_parameters()}
+        for name,optimizer in sorted(learner._named_optimizers.items()):
+            step=optimizer.step
+            def audited_step(*args,_step=step,_name=name,_optimizer=optimizer,**kwargs):
+                state=[]
+                for group in _optimizer.param_groups:
+                    for p in group["params"]:
+                        if p.grad is None:
+                            state.append({"name":named.get(id(p),"<UNBOUND>"),
+                                          "gradient":None})
+                        else:
+                            grad=p.grad.detach().cpu().numpy()
+                            state.append({"name":named.get(id(p),"<UNBOUND>"),
+                                          "dtype":str(grad.dtype),
+                                          "shape":list(grad.shape),
+                                          "gradient_sha256":hashlib.sha256(
+                                              grad.tobytes()).hexdigest(),
+                                          "gradient_l1":float(np.sum(
+                                              np.abs(grad.astype(np.float64))))})
+                consumed.append({"optimizer":_name,"parameter_grads":state})
+                return _step(*args,**kwargs)
+            optimizer.step=audited_step
+            originals.append((optimizer,step))
+        try:
+            output=original_apply(gradients_dict)
+        finally:
+            for optimizer,step in originals:
+                optimizer.step=step
         state_after=live_parameter_bound_adam(learner)
         param_after={
             name:hashlib.sha256(p.detach().cpu().numpy().tobytes()).hexdigest()
@@ -104,7 +136,8 @@ def install_batch_provenance(learner):
              "moment_before":state_before,
              "moment_after":state_after,
              "model_before":param_before,
-             "model_after":param_after})
+             "model_after":param_after,
+             "actual_optimizer_step_inputs":consumed})
         return output
     learner.apply_gradients=traced_apply
     return True
