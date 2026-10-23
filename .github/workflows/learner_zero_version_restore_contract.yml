@@ -1,0 +1,23 @@
+name: Ray Learner zero-version checkpoint contract (research)
+on:
+  push:
+    branches:
+      - ci/rllib-learner-zero-version-restore-20261023
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-method-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Python method AST syntax
+        run: python -m py_compile ci/learner_zero_version_restore_contract.py
+      - name: Actual production set_state method negative-control comparison
+        run: python ci/learner_zero_version_restore_contract.py --compare
