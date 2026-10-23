@@ -31,9 +31,19 @@ jobs:
           path.write_text(source)
           print("Patched actual imported wheel module:", path)
           PY
-      - name: Run native TestLearner source with real Ray actor and torch optimizer
+      - name: Run native TestLearner using installed Ray runtime, not source checkout
         env:
           RAY_DISABLE_DOCKER_CPU_WARNING: "1"
           RAY_DEDUP_LOGS: "0"
+          PYTHONPATH: "/tmp"
         run: |
-          python -m pytest python/ray/rllib/core/learner/tests/test_learner.py -q -k "stale_paired_module_optimizer or equal_version_paired_state or optimizer_only_future_version or unversioned_module_state_update or stale_module_state_does_not_downgrade"
+          cp python/ray/rllib/core/learner/tests/test_learner.py /tmp/test_learner_snapshot.py
+          cd /tmp
+          python - <<'PY'
+          import ray
+          import ray.rllib.core.learner.learner as learner_module
+          print("Ray installed wheel:", ray.__file__)
+          print("Native Learner patched module:", learner_module.__file__)
+          assert "/site-packages/" in ray.__file__
+          PY
+          python -m pytest test_learner_snapshot.py -q -k "stale_paired_module_optimizer or equal_version_paired_state or optimizer_only_future_version or unversioned_module_state_update or stale_module_state_does_not_downgrade"
