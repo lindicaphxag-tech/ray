@@ -81,7 +81,7 @@ def check_step(before, after, p):
     if not has_module and new_v != old_v:
         return "false_weight_publication"
     if kind == "pair" and 0 < version <= old_v:
-        if (new_w, new_opt, new_v) != before:
+        if after != before:
             return "partial_paired_admission"
     if kind == "pair" and version > old_v:
         if (new_w, new_opt, new_v) != (token, token, version):
