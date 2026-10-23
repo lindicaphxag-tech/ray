@@ -1,5 +1,8 @@
 name: RLlib native lease cost — no lease vs per-step vs amortized
 on:
+  pull_request:
+    branches:
+      - review/rllib-three-component-causal-state-20261023
   push:
     branches:
       - research/rllib-state-commit-failstop-20261024
