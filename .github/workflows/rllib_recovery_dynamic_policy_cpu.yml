@@ -1,0 +1,32 @@
+name: RLlib restored Runner dynamic policy contract (CPU)
+on:
+  pull_request:
+    paths:
+      - "python/ray/rllib/algorithms/algorithm.py"
+      - "ci/rllib_recovery_dynamic_policy_contract.py"
+      - ".github/workflows/rllib_recovery_dynamic_policy_cpu.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  restore-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile candidate and research harness
+        run: |
+          python -m py_compile python/ray/rllib/algorithms/algorithm.py
+          python -m py_compile python/ray/rllib/env/multi_agent_env_runner.py
+          python -m py_compile ci/rllib_recovery_dynamic_policy_contract.py
+      - name: Run candidate real production methods
+        run: python ci/rllib_recovery_dynamic_policy_contract.py
+      - name: Fetch official unchanged version for negative control
+        run: |
+          curl --fail --silent --show-error --location https://raw.githubusercontent.com/ray-project/ray/7795d644673b4a4ed4d407fd9e7b0ca981e9606b/python/ray/rllib/algorithms/algorithm.py -o /tmp/original_algorithm.py
+          curl --fail --silent --show-error --location https://raw.githubusercontent.com/ray-project/ray/7795d644673b4a4ed4d407fd9e7b0ca981e9606b/python/ray/rllib/env/multi_agent_env_runner.py -o /tmp/original_env_runner.py
+      - name: Execute unchanged official restore and runner methods as red control
+        run: python ci/rllib_recovery_dynamic_policy_contract.py /tmp/original_algorithm.py /tmp/original_env_runner.py --baseline
