@@ -1,11 +1,12 @@
 import tempfile
 import unittest
+from unittest import mock
 
 import gymnasium as gym
 import numpy as np
 
 import ray
-from ray.rllib.core import COMPONENT_RL_MODULE, DEFAULT_MODULE_ID
+from ray.rllib.core import COMPONENT_OPTIMIZER, COMPONENT_RL_MODULE, DEFAULT_MODULE_ID
 from ray.rllib.core.learner.learner import LR_KEY, Learner, UpdatePlan
 from ray.rllib.core.testing.testing_learner import BaseTestingAlgorithmConfig
 from ray.rllib.policy.sample_batch import MultiAgentBatch, SampleBatch
@@ -123,6 +124,75 @@ class TestLearner(unittest.TestCase):
                 current_state[module_id][parameter_name],
             )
         )
+
+
+    def test_stale_paired_module_optimizer_does_not_load_optimizer(self):
+        """The paired optimizer must be skipped when module weight version is stale."""
+        learner = BaseTestingAlgorithmConfig().build_learner(env=self.ENV)
+        state = learner.get_state()
+        learner.set_state({COMPONENT_RL_MODULE: state[COMPONENT_RL_MODULE]})
+        learner.set_state({COMPONENT_RL_MODULE: state[COMPONENT_RL_MODULE]})
+        current_version = learner.get_state()[WEIGHTS_SEQ_NO]
+        self.assertGreater(current_version, 1)
+
+        with mock.patch.object(
+            learner, "_set_optimizer_state", wraps=learner._set_optimizer_state
+        ) as restore:
+            learner.set_state(
+                {
+                    WEIGHTS_SEQ_NO: current_version - 1,
+                    COMPONENT_RL_MODULE: state[COMPONENT_RL_MODULE],
+                    COMPONENT_OPTIMIZER: state[COMPONENT_OPTIMIZER],
+                }
+            )
+            restore.assert_not_called()
+        self.assertEqual(learner.get_state()[WEIGHTS_SEQ_NO], current_version)
+
+    def test_equal_version_paired_state_cannot_only_restore_optimizer(self):
+        """Equal-version bundle with unknown source must be rejected as a pair."""
+        learner = BaseTestingAlgorithmConfig().build_learner(env=self.ENV)
+        state = learner.get_state()
+        learner.set_state({COMPONENT_RL_MODULE: state[COMPONENT_RL_MODULE]})
+        current_state = learner.get_state()
+        self.assertGreater(current_state[WEIGHTS_SEQ_NO], 0)
+
+        with mock.patch.object(
+            learner, "_set_optimizer_state", wraps=learner._set_optimizer_state
+        ) as restore:
+            learner.set_state(
+                {
+                    WEIGHTS_SEQ_NO: current_state[WEIGHTS_SEQ_NO],
+                    COMPONENT_RL_MODULE: current_state[COMPONENT_RL_MODULE],
+                    COMPONENT_OPTIMIZER: current_state[COMPONENT_OPTIMIZER],
+                }
+            )
+            restore.assert_not_called()
+
+    def test_optimizer_only_future_version_does_not_publish_unseen_weights(self):
+        """An optimizer-only state update cannot preempt a later module update."""
+        learner = BaseTestingAlgorithmConfig().build_learner(env=self.ENV)
+        initial = learner.get_state()
+        learner.set_state({COMPONENT_RL_MODULE: initial[COMPONENT_RL_MODULE]})
+        current = learner.get_state()
+        version = current[WEIGHTS_SEQ_NO]
+        self.assertGreater(version, 0)
+
+        learner.set_state(
+            {
+                WEIGHTS_SEQ_NO: version + 1,
+                COMPONENT_OPTIMIZER: current[COMPONENT_OPTIMIZER],
+            }
+        )
+        self.assertEqual(learner.get_state()[WEIGHTS_SEQ_NO], version)
+
+        future_module = current[COMPONENT_RL_MODULE]
+        learner.set_state(
+            {
+                WEIGHTS_SEQ_NO: version + 1,
+                COMPONENT_RL_MODULE: future_module,
+            }
+        )
+        self.assertEqual(learner.get_state()[WEIGHTS_SEQ_NO], version + 1)
 
     def test_end_to_end_update(self):
         """Tests the end-to-end update process for a single-agent scenario.
