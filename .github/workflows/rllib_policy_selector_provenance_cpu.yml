@@ -73,3 +73,13 @@ jobs:
           cd /tmp
           python rllib_native_trainable_selector_red_green.py /tmp/native_test_learner.py /tmp/candidate_learner.py
           python rllib_native_trainable_selector_red_green.py /tmp/native_test_learner.py /tmp/previous_learner.py --baseline
+      - name: Verify next gradient update on actual Ray Learner
+        env:
+          RAY_DISABLE_DOCKER_CPU_WARNING: "1"
+          RAY_DEDUP_LOGS: "0"
+          PYTHONPATH: "/tmp"
+        run: |
+          cp ci/rllib_real_training_selector_red_green.py /tmp/
+          cd /tmp
+          python rllib_real_training_selector_red_green.py /tmp/candidate_learner.py
+          python rllib_real_training_selector_red_green.py /tmp/previous_learner.py --baseline
