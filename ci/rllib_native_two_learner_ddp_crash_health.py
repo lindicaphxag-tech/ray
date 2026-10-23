@@ -158,6 +158,35 @@ def install_batch_provenance(learner):
                 for source,target in zip(original_params,clone_params):
                     target.grad=(None if source.grad is None
                                  else source.grad.detach().clone())
+                # Stronger non-invasiveness audit: check the *two optimizer
+                # objects* for cross-storage alias, not merely storage within
+                # the production optimizer. Include buffers and step counters.
+                def storage_roles(params,optim):
+                    roles={}
+                    for idx,p in enumerate(params):
+                        label=named.get(id(original_params[idx]),f"param-{idx}")
+                        objects=[("weight",p),("grad",p.grad)]
+                        objects.extend((str(k),v) for k,v in optim.state.get(p,{}).items())
+                        for role,tensor in objects:
+                            if isinstance(tensor,torch.Tensor):
+                                roles.setdefault(tensor.untyped_storage().data_ptr(),
+                                                 []).append(f"{label}:{role}")
+                    return roles
+                native_roles=storage_roles(original_params,_optimizer)
+                replay_roles=storage_roles(clone_params,isolated)
+                cross_alias=[
+                    {"native":native_roles[k],"replay":replay_roles[k]}
+                    for k in set(native_roles)&set(replay_roles)]
+                original_layout=[
+                    {"dtype":str(p.dtype),"shape":list(p.shape),
+                     "stride":list(p.stride()),"device":str(p.device),
+                     "contiguous":p.is_contiguous()}
+                    for p in original_params]
+                clone_layout=[
+                    {"dtype":str(p.dtype),"shape":list(p.shape),
+                     "stride":list(p.stride()),"device":str(p.device),
+                     "contiguous":p.is_contiguous()}
+                    for p in clone_params]
                 # Crucial ordering control: the independent replay MUST NOT
                 # run before the native production optimizer. Otherwise
                 # clone loading or tensor references could perturb the native
@@ -175,6 +204,10 @@ def install_batch_provenance(learner):
                     "per_param_replay_errors":diffs,
                     "shared_mutable_storage":shared_storages,
                     "optimizer_step_hooks":hook_counts,
+                    "cross_optimizer_storage_alias":cross_alias,
+                    "native_parameter_layout":original_layout,
+                    "replay_parameter_layout":clone_layout,
+                    "torch_grad_enabled":torch.is_grad_enabled(),
                 })
                 return output
             optimizer.step=audited_step
