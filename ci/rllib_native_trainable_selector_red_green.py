@@ -63,6 +63,7 @@ ns = {
     "np": np,
     "COMPONENT_OPTIMIZER": COMPONENT_OPTIMIZER,
     "COMPONENT_RL_MODULE": COMPONENT_RL_MODULE,
+    "DEFAULT_MODULE_ID": DEFAULT_MODULE_ID,
     "WEIGHTS_SEQ_NO": WEIGHTS_SEQ_NO,
     "BaseTestingAlgorithmConfig": BaseTestingAlgorithmConfig,
 }
