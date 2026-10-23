@@ -104,3 +104,41 @@ protocol must cover real asynchronous Learner/EnvRunner traffic, recover
 from cancellations/failures, avoid spurious drops, and beat strong existing
 recovery strategies. The first merge gate is maintainer acceptance and
 a passing official Buildkite Microcheck; neither has occurred yet.
+
+
+## The next research gate: transfer-intent indistinguishability
+
+The three-component guard is not the entire provenance solution.
+Actual production `Learner.get_state(components=COMPONENT_OPTIMIZER)`
+includes three keys: `COMPONENT_OPTIMIZER`, `WEIGHTS_SEQ_NO`, and
+`should_module_be_updated`. It omits RLModule weights but **does not omit
+the trainability-selector metadata**.
+
+This admits an explicit indistinguishable-payload counterexample:
+
+- History A: a caller intentionally requests an optimizer **and selector**
+  change to the remote configuration.
+- History B: a caller intends an **optimizer-only** transfer; the same selector
+  was automatically attached by `get_state(components=OPTIMIZER)`.
+
+For a fixed receiver state `S` and the exact same packet `P`, the
+desired post-state of the selector is different. No deterministic receiver
+`F(S,P)` can satisfy both contradictory requirements without another
+input describing the caller's intent. The simplest *binary* decision needs
+at least one explicit distinction; this is **not** a complete bound for
+arbitrary state identity, writer provenance, or fault tolerance.
+
+[Real production get_state/set_state executable certificate](https://github.com/lindicaphxag-tech/ray/blob/research/rllib-trainable-policy-state-coherence-20261023/ci/rllib_component_transfer_intent_indistinguishability.py)
+and [verified Actions log](https://github.com/lindicaphxag-tech/ray/actions/runs/39922677857)
+demonstrate this contract gap with the actual source methods.
+
+Consequently, the current two-file patch intentionally preserves
+`selector-only` and `optimizer-only` compatibility. It cannot claim
+that every independently transferred selector reflects the original model
+writer, or that a single scalar version identifies the complete state.
+An intent-tagged component-transfer protocol or state identity/lineage
+certificate would be a **separate** design requiring maintainer discussion.
+
+This is an application of a standard indistinguishability argument, not
+a new general information-theoretic theorem. No L9 originality or
+upstream acceptance is inferred from this certificate.
