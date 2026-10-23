@@ -79,7 +79,7 @@ try:
     try:
         results = learner.update(batch=batch)
         print("Actual learner update result keys:", sorted(map(str, results.keys())))
-    except (ValueError, RuntimeError, KeyError) as exc:
+    except (ValueError, RuntimeError, KeyError, UnboundLocalError) as exc:
         if not baseline:
             raise
         print("EXPECTED BASELINE: update cannot run after stale selector:", str(exc)[:200])
