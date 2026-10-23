@@ -27,6 +27,17 @@ jobs:
         run: |
           python -m py_compile ci/rllib_native_commit_failure_training.py
           python -m py_compile python/ray/rllib/core/learner/learner.py
+      - name: Restore Ray native CartPole offline fixture omitted from wheel
+        run: |
+          python - <<'PY'
+          import pathlib, shutil, ray
+          source = pathlib.Path("python/ray/rllib/offline/tests/data/cartpole/large.json")
+          target = pathlib.Path(ray.__file__).resolve().parent / "rllib/offline/tests/data/cartpole/large.json"
+          assert source.is_file() and source.stat().st_size > 1000
+          target.parent.mkdir(parents=True, exist_ok=True)
+          shutil.copyfile(source, target)
+          print("Installed native offline fixture",target,"bytes",target.stat().st_size)
+          PY
       - name: Real CartPole Learner update after injected selector failure
         run: |
           cp python/ray/rllib/core/learner/learner.py /tmp/review_learner.py
