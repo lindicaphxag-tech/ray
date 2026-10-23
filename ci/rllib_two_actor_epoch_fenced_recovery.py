@@ -328,13 +328,14 @@ def run():
             [a.train_probe.remote() for a in actors]))
         # Global epoch publication only after verifying both stage ACKs.
         ray.get(authority.publish.remote(2,good))
-        assert all(x["result"]=="BLOCKED" for x in ray.get(
+        # Both local epochs are still e1; authority now grants only e2.
+        assert all(x["result"]=="AUTHORITY_FENCED" for x in ray.get(
             [a.train_probe.remote() for a in actors]))
         # Delayed local commit notification: first actor has e2 lease while
         # second remains locally fenced; second cannot train prematurely.
         one=ray.get(actors[0].admit.remote(2))
         delayed=ray.get(actors[1].train_probe.remote())
-        assert delayed["result"]=="BLOCKED",delayed
+        assert delayed["result"]=="AUTHORITY_FENCED",delayed
         assert ray.get(actors[0].train_probe.remote())["result"]=="SELECTOR_BLOCKED"
         committed=[one,ray.get(actors[1].admit.remote(2))]
         assert_same(actors,2,True)
