@@ -1646,8 +1646,10 @@ class Learner(Checkpointable):
         if COMPONENT_OPTIMIZER in state and not rejected_paired_checkpoint:
             self._set_optimizer_state(state[COMPONENT_OPTIMIZER])
 
-        # Keep the sequence monotonic: stale state must not downgrade the version of newer weights.
-        if weights_seq_no > self._weights_seq_no:
+        # Advance the advertised weight version only when the corresponding
+        # module weights were supplied. Optimizer-only / metadata-only state
+        # packets must not claim that unseen weights were installed.
+        if COMPONENT_RL_MODULE in state and weights_seq_no > self._weights_seq_no:
             self._weights_seq_no = weights_seq_no
 
         # Update our trainable Modules information/function via our config.
