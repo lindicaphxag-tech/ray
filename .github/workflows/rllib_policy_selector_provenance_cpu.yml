@@ -44,6 +44,10 @@ jobs:
         run: |
           python ci/rllib_three_component_bounded_state_checker.py python/ray/rllib/core/learner/learner.py
           python ci/rllib_three_component_bounded_state_checker.py /tmp/previous_learner.py --baseline
+      - name: Prove component-only state cannot convey selector update intent
+        run: |
+          python -m py_compile ci/rllib_component_transfer_intent_indistinguishability.py
+          python ci/rllib_component_transfer_intent_indistinguishability.py
   native-test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
