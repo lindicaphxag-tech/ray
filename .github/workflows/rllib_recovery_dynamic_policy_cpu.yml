@@ -17,11 +17,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Compile candidate and research harness
+      - name: Install focused source quality checker
+        run: python -m pip install ruff==0.17.1
+      - name: Compile candidate, native test and research harness
         run: |
           python -m py_compile python/ray/rllib/algorithms/algorithm.py
+          python -m py_compile python/ray/rllib/algorithms/tests/test_algorithm.py
           python -m py_compile python/ray/rllib/env/multi_agent_env_runner.py
           python -m py_compile ci/rllib_recovery_dynamic_policy_contract.py
+          ruff check --isolated --select E4,E7,E9,F python/ray/rllib/algorithms/algorithm.py python/ray/rllib/algorithms/tests/test_algorithm.py
+          ruff format --check python/ray/rllib/algorithms/tests/test_algorithm.py
       - name: Run candidate real production methods
         run: python ci/rllib_recovery_dynamic_policy_contract.py
       - name: Fetch official unchanged version for negative control
