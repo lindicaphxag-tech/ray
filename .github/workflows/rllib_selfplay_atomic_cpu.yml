@@ -1,0 +1,39 @@
+name: RLlib self-play per-runner atomic activation (CPU)
+on:
+  pull_request:
+    paths:
+      - "ci/rllib_recovery_activation_contract.py"
+      - ".github/workflows/rllib_selfplay_atomic_cpu.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  atomic-activation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install native-file quality gate
+        run: python -m pip install ruff==0.17.1
+      - name: Validate native source and test style
+        run: |
+          ruff check --isolated --select E4,E7,E9,F python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py python/ray/rllib/examples/multi_agent/utils/test_self_play_league_based_callback.py
+          ruff format --check python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py python/ray/rllib/examples/multi_agent/utils/test_self_play_league_based_callback.py
+      - name: Compile candidate and regression
+        run: |
+          python -m py_compile python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py
+          python -m py_compile python/ray/rllib/examples/multi_agent/utils/test_self_play_league_based_callback.py
+          python -m py_compile ci/rllib_recovery_activation_contract.py
+      - name: Run changed-health actor scheduling on patched production methods
+        run: python ci/rllib_recovery_activation_contract.py
+      - name: Download exact unmodified official PR head for negative control
+        run: |
+          git fetch --no-tags --depth=1 https://github.com/ray-project/ray.git 4444ffcd555d2cc211f7b6e3bfb13a9d16fea918
+          git show FETCH_HEAD:python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py > /tmp/orig_callback.py
+          git show FETCH_HEAD:python/ray/rllib/env/multi_agent_env_runner.py > /tmp/orig_runner.py
+          git show FETCH_HEAD:python/ray/rllib/env/env_runner_group.py > /tmp/orig_runner_group.py
+      - name: Reproduce original cross-RPC recovering actor gap
+        run: python ci/rllib_recovery_activation_contract.py /tmp/orig_callback.py /tmp/orig_runner.py /tmp/orig_runner_group.py --baseline

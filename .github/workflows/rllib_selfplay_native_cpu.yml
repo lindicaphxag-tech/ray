@@ -1,0 +1,76 @@
+name: RLlib self-play native pytest (Ray wheel CPU)
+on:
+  pull_request:
+    paths:
+      - "python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py"
+      - "python/ray/rllib/examples/multi_agent/utils/test_self_play_league_based_callback.py"
+      - ".github/workflows/rllib_selfplay_native_cpu.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: python/requirements.txt
+      - name: Install released Ray native extension and RLlib runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "ray[rllib]" pytest
+      - name: Display exact installed package resolution
+        run: |
+          python -c "import ray,sys; print('ray version', ray.__version__, 'installed ray path', ray.__file__, 'python', sys.version)"
+          python -m pip show ray
+      - name: Compile PR's native test and callback
+        run: |
+          python -m py_compile python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py
+          python -m py_compile python/ray/rllib/examples/multi_agent/utils/test_self_play_league_based_callback.py
+      - name: Overlay PR callback and native tests into installed compiled Ray wheel
+        run: |
+          python - <<'PY'
+          import pathlib, shutil, ray
+          source = pathlib.Path("python/ray/rllib/examples/multi_agent/utils")
+          target = pathlib.Path(ray.__file__).resolve().parent / "rllib/examples/multi_agent/utils"
+          for filename in ("self_play_league_based_callback.py", "test_self_play_league_based_callback.py"):
+              shutil.copy2(source / filename, target / filename)
+              print("overlay", source / filename, "->", target / filename)
+          PY
+      - name: Run native RLlib callback tests with released wheel dependencies
+        run: |
+          python - <<'PY'
+          import pathlib, ray, subprocess, sys
+          test = pathlib.Path(ray.__file__).resolve().parent / "rllib/examples/multi_agent/utils/test_self_play_league_based_callback.py"
+          print("Ray", ray.__version__, "native extension", ray._raylet.__file__, "test", test, flush=True)
+          raise SystemExit(subprocess.call([sys.executable, "-m", "pytest", "-q", "-vv", str(test)]))
+          PY
+      - name: Verify previous official PR snapshot fails the new clone-source regression
+        run: |
+          python - <<'PY'
+          import pathlib, ray, subprocess, sys, urllib.request
+          base = pathlib.Path(ray.__file__).resolve().parent / "rllib/examples/multi_agent/utils"
+          url = (
+              "https://raw.githubusercontent.com/ray-project/ray/"
+              "639c812ad1f68dc2a6409a59bc0bcc02f4727054/"
+              "python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py"
+          )
+          urllib.request.urlretrieve(url, base / "self_play_league_based_callback.py")
+          result = subprocess.run(
+              [sys.executable, "-m", "pytest", "-q", "-vv",
+               str(base / "test_self_play_league_based_callback.py"),
+               "-k", "test_new_self_play_module_weights_are_synced_before_mapping",
+               "--tb=short"],
+              text=True, capture_output=True,
+          )
+          print(result.stdout)
+          print(result.stderr)
+          assert result.returncode == 1, "Old official callback unexpectedly passed"
+          assert "AssertionError" in result.stdout, "Expected source-weight assertion failure"
+          assert "1 failed" in result.stdout, "Expected one failing clone-source test"
+          print("EXPECTED RED: official old head copied uninitialized module, not source behavior weights")
+          PY
