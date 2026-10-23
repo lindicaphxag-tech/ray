@@ -65,3 +65,16 @@ A fully safe and reviewable upstream proposal still requires:
 ### Reproduction
 
 [Fork research PR #11](https://github.com/lindicaphxag-tech/ray/pull/11) keeps all experiments in a single Draft review branch; the native 2-Learner actor-loss test is `ci/rllib_native_two_learner_ddp_crash_health.py` and its Actions workflow is `.github/workflows/rllib_native_two_learner_ddp_crash_health.yml`.
+
+
+## Completed physical-crash recovery with resumed native distributed gradient
+
+[Final native CI #40004680729](https://github.com/lindicaphxag-tech/ray/actions/runs/40004680729) **passed** the full expanded experiment, including all of the above participation checks and a real actor kill.
+
+After the liveness challenge detected one physically dead learner, the test stopped the old `LearnerGroup`, constructed a **new real 2-Learner CPU DDP group** from the original `BaseTestingAlgorithmConfig`, and applied the last-known-authoritative group checkpoint with the actual `LearnerGroup.set_state` API. The new group had 2 participants; both recovered models matched the authoritative weights with maximum absolute error **0**, and peer mismatch was **0**. The rebuilt group then completed a **new synchronous real 200-row CartPole distributed gradient**, max tensor change **0.0010000020265579224** and post-update cross-Learner mismatch **0**.
+
+This is materially stronger than a source-only mocked recovery: the killed Ray process was gone, both new native DDP workers were actually initialized, the real checkpoint was installed and real gradients subsequently ran.
+
+**Scope:** the coordinator was alive throughout, the checkpoint remained available in the parent Python process, and the entire group was rebuilt. Not tested: automatic production failover, persistent checkpoint durability, actor failures *during* the apply/commit stage, model/optimizer state checksum beyond inspected tensor state, Ray placement groups across real machines, malicious/non-responsive nodes, or the reward/throughput tradeoff under natural training workloads. Group destruction and creation may take seconds; this test is an existence/correctness witness, not proof of a fast low-disruption recovery architecture.
+
+**Decision:** Before submitting any new upstream production implementation, discuss with maintainers whether the right scope is an opt-in `LearnerGroup` commit/quiescence method incorporating membership ACKs and fail-closed rebuilding. Existing `#67131` and `#67329` should remain narrow correctness fixes and must not absorb this unreviewed distributed feature.
