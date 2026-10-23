@@ -85,12 +85,27 @@ def install_batch_provenance(learner):
             h.update(arr.tobytes())
             l1+=float(np.sum(np.abs(arr.astype(np.float64))))
             count+=1
+        state_before=live_parameter_bound_adam(learner)
+        param_before={
+            name:hashlib.sha256(p.detach().cpu().numpy().tobytes()).hexdigest()
+            for name,p in learner.module[DEFAULT_MODULE_ID].named_parameters()
+        }
+        output=original_apply(gradients_dict)
+        state_after=live_parameter_bound_adam(learner)
+        param_after={
+            name:hashlib.sha256(p.detach().cpu().numpy().tobytes()).hexdigest()
+            for name,p in learner.module[DEFAULT_MODULE_ID].named_parameters()
+        }
         learner._audit_adam_apply.append(
             {"pre_adam_gradient_sha256":h.hexdigest(),
              "pre_adam_gradient_l1":l1,
              "tensors":count,
-             "optimizer_config":optimizer_update_config(learner)})
-        return original_apply(gradients_dict)
+             "optimizer_config":optimizer_update_config(learner),
+             "moment_before":state_before,
+             "moment_after":state_after,
+             "model_before":param_before,
+             "model_after":param_after})
+        return output
     learner.apply_gradients=traced_apply
     return True
 
