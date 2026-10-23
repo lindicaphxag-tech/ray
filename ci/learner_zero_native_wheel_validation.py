@@ -8,7 +8,7 @@ import ast
 from pathlib import Path
 
 import gymnasium as gym
-from ray.rllib.core import COMPONENT_RL_MODULE
+from ray.rllib.core import COMPONENT_RL_MODULE, COMPONENT_OPTIMIZER, COMPONENT_METRICS_LOGGER
 from ray.rllib.core.learner.learner import Learner
 from ray.rllib.core.testing.testing_learner import BaseTestingAlgorithmConfig
 from ray.rllib.utils.metrics import WEIGHTS_SEQ_NO
@@ -27,8 +27,8 @@ def patch_with_exact_development_method():
         arg.annotation = None
     exec_ns = {
         "COMPONENT_RL_MODULE": COMPONENT_RL_MODULE,
-        "COMPONENT_OPTIMIZER": "optimizer",
-        "COMPONENT_METRICS_LOGGER": "metrics_logger",
+        "COMPONENT_OPTIMIZER": COMPONENT_OPTIMIZER,
+        "COMPONENT_METRICS_LOGGER": COMPONENT_METRICS_LOGGER,
         "WEIGHTS_SEQ_NO": WEIGHTS_SEQ_NO,
     }
     exec(compile(ast.fix_missing_locations(
