@@ -78,6 +78,19 @@ class EpochAuthority:
         self.live_epoch=None
         self.pending=None
         self.fenced=True
+        self.active={}
+        self.next_ticket=0
+
+    def acquire(self,epoch):
+        if self.fenced or self.live_epoch!=epoch:
+            return None
+        self.next_ticket+=1
+        self.active[self.next_ticket]=epoch
+        return self.next_ticket
+
+    def release(self,ticket):
+        assert ticket in self.active,ticket
+        del self.active[ticket]
 
     def bootstrap(self,epoch):
         assert self.live_epoch is None
@@ -85,6 +98,8 @@ class EpochAuthority:
 
     def begin(self,new_epoch):
         assert not self.fenced and self.pending is None
+        if self.active:
+            raise RuntimeError("in-flight training lease prevents new epoch")
         assert new_epoch>self.live_epoch
         self.fenced=True
         self.pending=new_epoch
@@ -98,11 +113,13 @@ class EpochAuthority:
 
     def release_recovered(self,epoch):
         assert self.pending is None and self.live_epoch==epoch
+        assert not self.active
         self.fenced=False
         return self.snapshot()
 
     def publish(self,epoch,acks):
         assert self.pending==epoch and len(acks)==2
+        assert not self.active
         assert all(x["status"]=="PREPARED" and x["snapshot"]["local_version"]==epoch
                    for x in acks),acks
         self.live_epoch=epoch
@@ -115,7 +132,7 @@ class EpochAuthority:
 
     def snapshot(self):
         return {"live_epoch":self.live_epoch,"pending":self.pending,
-                "fenced":self.fenced}
+                "fenced":self.fenced,"inflight":len(self.active)}
 
 
 @ray.remote(num_cpus=1)
@@ -130,6 +147,7 @@ class FencedNativeLearner:
         self.staged=None
         self.quarantined=True
         self.train_allowed=False
+        self.held_ticket=None
 
     def initial_snapshot(self):
         snap=self.learner.get_state()
@@ -208,17 +226,35 @@ class FencedNativeLearner:
         self.train_allowed=True
         return self.status()
 
+    def hold_training_lease(self):
+        assert self.train_allowed and not self.quarantined
+        assert self.held_ticket is None
+        ticket=ray.get(self.authority.acquire.remote(self.epoch))
+        assert ticket is not None, "authority rejected training lease"
+        self.held_ticket=ticket
+        return {"actor":self.rank,"ticket":ticket}
+
+    def end_training_lease(self):
+        assert self.held_ticket is not None
+        ray.get(self.authority.release.remote(self.held_ticket))
+        self.held_ticket=None
+        return {"actor":self.rank,"result":"LEASE_RELEASED"}
+
     def train_probe(self):
-        # This authorization check is made at the actual wrapper's read path.
-        # Even a delayed/missing local fence cannot override authority fencing.
-        if not ray.get(self.authority.can_train.remote(self.epoch)):
+        # Every wrapper-mediated train call holds a central ticket while
+        # making its policy decision. Real Learner.update() is not yet
+        # instrumented here; hold_training_lease simulates its in-flight span.
+        ticket=ray.get(self.authority.acquire.remote(self.epoch))
+        if ticket is None:
             return {"actor":self.rank,"result":"AUTHORITY_FENCED"}
-        if not self.train_allowed or self.quarantined:
-            return {"actor":self.rank,"result":"BLOCKED"}
-        # A real Learner module eligibility gate, not a reward claim.
-        if not self.learner.should_module_be_updated(DEFAULT_MODULE_ID):
-            return {"actor":self.rank,"result":"SELECTOR_BLOCKED"}
-        return {"actor":self.rank,"result":"ELIGIBLE"}
+        try:
+            if not self.train_allowed or self.quarantined:
+                return {"actor":self.rank,"result":"BLOCKED"}
+            if not self.learner.should_module_be_updated(DEFAULT_MODULE_ID):
+                return {"actor":self.rank,"result":"SELECTOR_BLOCKED"}
+            return {"actor":self.rank,"result":"ELIGIBLE"}
+        finally:
+            ray.get(self.authority.release.remote(ticket))
 
     def close(self):
         with suppress(Exception):
@@ -263,6 +299,22 @@ def run():
         intended[WEIGHTS_SEQ_NO]=2
         intended[COMPONENT_RL_MODULE]=mutate_first_weight(authoritative[COMPONENT_RL_MODULE])
         intended["should_module_be_updated"]={"blocked_other_policy"}
+
+        # Hold an in-flight training lease while the coordinator attempts
+        # an update: begin() MUST refuse instead of racing with a reader.
+        ticket=ray.get(actors[0].hold_training_lease.remote())
+        assert ticket["ticket"]>0
+        try:
+            ray.get(authority.begin.remote(2))
+        except ray.exceptions.RayTaskError as err:
+            assert "in-flight training lease" in str(err),str(err)
+        else:
+            raise AssertionError("authority began an epoch during in-flight training")
+        assert ray.get(authority.snapshot.remote())["inflight"]==1
+        ray.get(actors[0].end_training_lease.remote())
+        assert ray.get(authority.snapshot.remote())["inflight"]==0
+        print("TRAINING_LEASE_DRAIN: rejected begin until in-flight ticket released",
+              flush=True)
 
         t0=time.perf_counter()
         ray.get(authority.begin.remote(2))
