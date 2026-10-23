@@ -68,6 +68,20 @@ def optimizer_numeric_leaves(snapshot):
     return leaves
 
 
+def optimizer_max_abs_difference(a,b):
+    assert a.keys()==b.keys(),(a.keys()-b.keys(),b.keys()-a.keys())
+    return max(float(np.max(np.abs(
+        np.asarray(a[k],dtype=np.float64)-np.asarray(b[k],dtype=np.float64))))
+        for k in a)
+
+
+def all_optimizer_states(group):
+    return [r.get() for r in group.foreach_learner(
+        lambda learner: optimizer_numeric_leaves({
+            COMPONENT_LEARNER:learner.get_state()
+        }))]
+
+
 def checked_optimizer_error(a,b,*,atol=1e-6,rtol=1e-5):
     assert a.keys()==b.keys(),(a.keys()-b.keys(),b.keys()-a.keys())
     max_delta=0.0
@@ -197,11 +211,23 @@ def main():
         warm_checkpoint=copy.deepcopy(group.get_state())
         warm_models=all_model_states(group)
         warm_optimizer=optimizer_numeric_leaves(warm_checkpoint)
+        warm_peer_opt=all_optimizer_states(group)
+        print("WARM_ADAM_PEER_STATE",
+              json.dumps({"peer_optimizer_max_error":optimizer_max_abs_difference(
+                              warm_peer_opt[0],warm_peer_opt[1]),
+                          "leader_to_checkpoint_max_error":optimizer_max_abs_difference(
+                              warm_optimizer,warm_peer_opt[0])}),flush=True)
         # Counterfactual: uninterrupted continuation from the warm checkpoint.
         healthy_continuation=group.update(batch=batch,async_update=False)
         assert len(healthy_continuation)==2
         reference_next_models=all_model_states(group)
         reference_next_optimizer=optimizer_numeric_leaves(group.get_state())
+        reference_peer_optimizer=all_optimizer_states(group)
+        print("HEALTHY_WARM_CONTINUATION",
+              json.dumps({"model_peer_error":maximum_error(*reference_next_models),
+                          "optimizer_peer_error":optimizer_max_abs_difference(
+                              reference_peer_optimizer[0],reference_peer_optimizer[1])}),
+              flush=True)
         assert maximum_error(warm_models[0],reference_next_models[0])>0
         # A checkpoint older than the active weight sequence is NOT safely
         # rewound into the same live Learner via ordinary set_state: version
@@ -292,6 +318,12 @@ def main():
               json.dumps({"optimizer_buffers":len(rebuilt_opt),
                           "optimizer_restore_max_error":restored_opt_error}),flush=True)
         replaced_models=all_model_states(replacement)
+        recovered_peer_optimizer=all_optimizer_states(replacement)
+        print("REBUILT_WARM_ADAM_PEER_STATE",
+              json.dumps({"peer_optimizer_max_error":optimizer_max_abs_difference(
+                              recovered_peer_optimizer[0],recovered_peer_optimizer[1]),
+                          "leader_to_warm_max_error":optimizer_max_abs_difference(
+                              warm_optimizer,recovered_peer_optimizer[0])}),flush=True)
         assert maximum_error(*replaced_models)<1e-6
         recovered_err=maximum_error(models0[0],replaced_models[0])
         assert recovered_err<1e-5,recovered_err
@@ -307,8 +339,18 @@ def main():
         trained=all_model_states(replacement)
         training_delta=maximum_error(replaced_models[0],trained[0])
         assert training_delta>0,training_delta
-        assert maximum_error(*trained)<1e-5,maximum_error(*trained)
+        diagnostic_peer_error=maximum_error(*trained)
         trajectory_error=maximum_error(reference_next_models[0],trained[0])
+        current_optimizer=all_optimizer_states(replacement)
+        print("POST_CRASH_GRADIENT_TRAJECTORY_DIAGNOSTICS",
+              json.dumps({"reference_model_peer_error":maximum_error(*reference_next_models),
+                          "recovered_model_peer_error":diagnostic_peer_error,
+                          "reference_vs_recovered_model_error":trajectory_error,
+                          "recovered_optimizer_peer_error":optimizer_max_abs_difference(
+                              current_optimizer[0],current_optimizer[1]),
+                          "recovered_optimizer_vs_reference_error":optimizer_max_abs_difference(
+                              reference_next_optimizer,current_optimizer[0])}),flush=True)
+        assert diagnostic_peer_error<1e-5,diagnostic_peer_error
         assert trajectory_error<1e-5,trajectory_error
         recovered_optimizer=optimizer_numeric_leaves(replacement.get_state())
         optimizer_trajectory_error=checked_optimizer_error(
