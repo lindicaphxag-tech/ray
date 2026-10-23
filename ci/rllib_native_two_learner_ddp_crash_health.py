@@ -44,6 +44,29 @@ def install_batch_provenance(learner):
              "field_count":len(names)})
         return original(module_id=module_id,config=config,batch=batch,fwd_out=fwd_out)
     learner.compute_loss_for_module=traced
+    original_gradients=learner.compute_gradients
+    learner._audit_gradient_digest=[]
+    def traced_gradients(*args,**kwargs):
+        grads=original_gradients(*args,**kwargs)
+        h=hashlib.sha256()
+        tensors=0
+        absolute_sum=0.0
+        # Sort by semantic parameter name rather than Python Parameter id.
+        for name,param in sorted(learner.module[DEFAULT_MODULE_ID].named_parameters()):
+            grad=param.grad
+            if grad is None:
+                continue
+            arr=grad.detach().cpu().numpy()
+            h.update(name.encode())
+            h.update(str(arr.shape).encode())
+            h.update(arr.tobytes())
+            tensors+=1
+            absolute_sum+=float(np.sum(np.abs(arr.astype(np.float64))))
+        learner._audit_gradient_digest.append(
+            {"sha256":h.hexdigest(),"tensors":tensors,
+             "l1":absolute_sum})
+        return grads
+    learner.compute_gradients=traced_gradients
     return True
 
 
@@ -54,6 +77,11 @@ def get_batch_provenance(learner):
 def traced_batches(group):
     result=group.foreach_learner(get_batch_provenance)
     return [r.get() for r in result]
+
+
+def traced_gradients(group):
+    return [r.get() for r in group.foreach_learner(
+        lambda learner:list(getattr(learner,"_audit_gradient_digest",[])))]
 
 
 def delayed_gradient(learner):
@@ -262,8 +290,11 @@ def main():
         reference_next_models=all_model_states(group)
         reference_next_optimizer=optimizer_numeric_leaves(group.get_state())
         reference_batch_trace=traced_batches(group)
+        reference_gradient_trace=traced_gradients(group)
         print("HEALTHY_STEP_ACTUAL_BATCH_SHA256",
               json.dumps(reference_batch_trace,sort_keys=True),flush=True)
+        print("HEALTHY_STEP_ACTUAL_GRADIENT_SHA256",
+              json.dumps(reference_gradient_trace,sort_keys=True),flush=True)
         reference_peer_optimizer=all_optimizer_states(group)
         print("HEALTHY_WARM_CONTINUATION",
               json.dumps({"model_peer_error":maximum_error(*reference_next_models),
@@ -384,6 +415,15 @@ def main():
               json.dumps(recovered_batch_trace,sort_keys=True),flush=True)
         print("ACTUAL_BATCH_PROVENANCE_MATCHES",
               json.dumps({"same_per_rank":reference_batch_trace==recovered_batch_trace}),
+              flush=True)
+        recovered_gradient_trace=traced_gradients(replacement)
+        print("RECOVERED_STEP_ACTUAL_GRADIENT_SHA256",
+              json.dumps(recovered_gradient_trace,sort_keys=True),flush=True)
+        print("ACTUAL_GRADIENT_PROVENANCE_MATCHES",
+              json.dumps({"same_per_rank":reference_gradient_trace==recovered_gradient_trace,
+                          "peer_gradient_match":
+                              len(recovered_gradient_trace)==2 and
+                              recovered_gradient_trace[0]==recovered_gradient_trace[1]}),
               flush=True)
         assert len(return_values)==2,return_values
         trained=all_model_states(replacement)
