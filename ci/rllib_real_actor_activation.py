@@ -98,7 +98,7 @@ class HealthChangeManager:
     def foreach_actor(self,func,**kw):
         self.calls+=1
         if self.calls==2:
-            self.inner.set_actor_state(2,True)
+            self.inner.set_actor_state(self.inner.actor_ids()[-1],True)
         return self.inner.foreach_actor(func,**kw)
 
 class EnvRunnerDispatch:
@@ -116,7 +116,7 @@ def check():
         a2=Remote.remote("remote2")
         inner=FaultTolerantActorManager(
             [a1,a2], max_remote_requests_in_flight_per_actor=2)
-        inner.set_actor_state(2,False)
+        inner.set_actor_state(inner.actor_ids()[-1],False)
         manager=HealthChangeManager(inner)
         local=Worker("local")
         dispatch=SimpleNamespace(
