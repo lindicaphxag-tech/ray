@@ -67,6 +67,31 @@ def install_batch_provenance(learner):
              "l1":absolute_sum})
         return grads
     learner.compute_gradients=traced_gradients
+    original_apply=learner.apply_gradients
+    learner._audit_adam_apply=[]
+    def traced_apply(gradients_dict):
+        named={id(param):name for name,param in
+               learner.module[DEFAULT_MODULE_ID].named_parameters()}
+        h=hashlib.sha256()
+        l1=0.0
+        count=0
+        for param,gradient in sorted(
+            gradients_dict.items(),key=lambda pair:named.get(id(pair[0]),"")):
+            if gradient is None:
+                continue
+            name=named.get(id(param),"<UNKNOWN>")
+            arr=gradient.detach().cpu().numpy()
+            h.update(name.encode())
+            h.update(arr.tobytes())
+            l1+=float(np.sum(np.abs(arr.astype(np.float64))))
+            count+=1
+        learner._audit_adam_apply.append(
+            {"pre_adam_gradient_sha256":h.hexdigest(),
+             "pre_adam_gradient_l1":l1,
+             "tensors":count,
+             "optimizer_config":optimizer_update_config(learner)})
+        return original_apply(gradients_dict)
+    learner.apply_gradients=traced_apply
     return True
 
 
@@ -82,6 +107,11 @@ def traced_batches(group):
 def traced_gradients(group):
     return [r.get() for r in group.foreach_learner(
         lambda learner:list(getattr(learner,"_audit_gradient_digest",[])))]
+
+
+def traced_adam_applies(group):
+    return [r.get() for r in group.foreach_learner(
+        lambda learner:list(getattr(learner,"_audit_adam_apply",[])))]
 
 
 def delayed_gradient(learner):
@@ -350,6 +380,9 @@ def main():
         reference_next_optimizer=optimizer_numeric_leaves(group.get_state())
         reference_batch_trace=traced_batches(group)
         reference_gradient_trace=traced_gradients(group)
+        reference_apply_trace=traced_adam_applies(group)
+        print("HEALTHY_STEP_ADAM_UPDATE_INPUT",
+              json.dumps(reference_apply_trace,sort_keys=True),flush=True)
         print("HEALTHY_STEP_ACTUAL_BATCH_SHA256",
               json.dumps(reference_batch_trace,sort_keys=True),flush=True)
         print("HEALTHY_STEP_ACTUAL_GRADIENT_SHA256",
@@ -488,6 +521,12 @@ def main():
               json.dumps({"same_per_rank":reference_batch_trace==recovered_batch_trace}),
               flush=True)
         recovered_gradient_trace=traced_gradients(replacement)
+        recovered_apply_trace=traced_adam_applies(replacement)
+        print("RECOVERED_STEP_ADAM_UPDATE_INPUT",
+              json.dumps(recovered_apply_trace,sort_keys=True),flush=True)
+        print("ADAM_APPLY_INPUTS_MATCH",
+              json.dumps({"same_per_rank":reference_apply_trace==recovered_apply_trace}),
+              flush=True)
         print("RECOVERED_STEP_ACTUAL_GRADIENT_SHA256",
               json.dumps(recovered_gradient_trace,sort_keys=True),flush=True)
         print("ACTUAL_GRADIENT_PROVENANCE_MATCHES",
