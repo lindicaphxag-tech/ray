@@ -1,0 +1,66 @@
+name: RLlib CPU optimizer checkpoint native red-green regression
+on:
+  pull_request:
+    branches:
+      - fix/rllib-optimizer-actor-owned-buffers-20261024
+  push:
+    branches:
+      - ci/rllib-owned-optimizer-regression-20261024
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  stock-red-patched-green:
+    runs-on: ubuntu-latest
+    timeout-minutes: 17
+    env:
+      RAY_AUTH_MODE: disabled
+      OMP_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Ray binary and CPU torch
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install "ray[rllib]==2.59.0" pytest
+      - name: Install unchanged source CartPole offline fixture
+        run: |
+          python - <<'PY'
+          import pathlib,shutil,ray
+          src=pathlib.Path("python/ray/rllib/offline/tests/data/cartpole/large.json")
+          target=pathlib.Path(ray.__file__).resolve().parent/"rllib/offline/tests/data/cartpole/large.json"
+          assert src.is_file() and src.stat().st_size>1000
+          target.parent.mkdir(parents=True,exist_ok=True)
+          shutil.copyfile(src,target)
+          PY
+      - name: Original installed native Ray optimizer ownership regression must fail
+        run: |
+          set +e
+          cd /tmp
+          python -m pytest -x -q "$GITHUB_WORKSPACE/python/ray/rllib/core/learner/tests/test_torch_optimizer_restore_ownership.py"
+          result=$?
+          set -e
+          echo "STOCK_RAY_TEST_EXIT_CODE=$result"
+          if [ "$result" -eq 0 ]; then
+            echo "Unexpected: original stock wheel passed ownership witness"
+            exit 1
+          fi
+          echo "STOCK_RAY_OWNERSHIP_WITNESS_RED_CONFIRMED"
+      - name: Install production patched TorchLearner source on native wheel
+        run: |
+          python - <<'PY'
+          import pathlib,shutil,ray
+          original=pathlib.Path("python/ray/rllib/core/learner/torch/torch_learner.py")
+          installed=pathlib.Path(ray.__file__).resolve().parent/"rllib/core/learner/torch/torch_learner.py"
+          assert original.is_file() and installed.is_file()
+          shutil.copyfile(original,installed)
+          print("EXACT_SOURCE_PATCH_INSTALLED",installed)
+          PY
+      - name: Patched native Ray optimizer checkpoint ownership must pass
+        run: |
+          cd /tmp
+          python -m pytest -q "$GITHUB_WORKSPACE/python/ray/rllib/core/learner/tests/test_torch_optimizer_restore_ownership.py"
+          echo "PATCHED_RAY_OWNERSHIP_REGRESSION_GREEN_CONFIRMED"
