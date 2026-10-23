@@ -203,14 +203,14 @@ def main():
         reference_next_models=all_model_states(group)
         reference_next_optimizer=optimizer_numeric_leaves(group.get_state())
         assert maximum_error(warm_models[0],reference_next_models[0])>0
-        # Restore the *same warmed checkpoint* before the actor death.
-        group.set_state(copy.deepcopy(warm_checkpoint))
-        assert maximum_error(warm_models[0],all_model_states(group)[0])<1e-6
-        optimizer_rewind_error=checked_optimizer_error(
-            warm_optimizer,optimizer_numeric_leaves(group.get_state()))
-        print("WARM_ADAM_CHECKPOINT_REWIND",
+        # A checkpoint older than the active weight sequence is NOT safely
+        # rewound into the same live Learner via ordinary set_state: version
+        # admission may decline the older weights, while optimizer state may
+        # still be installed. A crash-recovery comparison must use a *fresh*
+        # LearnerGroup. We therefore leave the healthy continuation intact,
+        # kill one worker and compare a newly reconstructed group.
+        print("WARM_ADAM_REFERENCE_CONTINUATION",
               json.dumps({"optimizer_buffers":len(warm_optimizer),
-                          "optimizer_restore_max_error":optimizer_rewind_error,
                           "reference_update_delta":maximum_error(
                               warm_models[0],reference_next_models[0])}),flush=True)
         baseline=warm_checkpoint
@@ -286,6 +286,11 @@ def main():
         assert replacement._worker_manager.num_actors()==2
         replacement.set_state(copy.deepcopy(baseline))
         rebuild_and_restore_ms=(time.perf_counter()-recovery_start)*1000
+        rebuilt_opt=optimizer_numeric_leaves(replacement.get_state())
+        restored_opt_error=checked_optimizer_error(warm_optimizer,rebuilt_opt)
+        print("WARM_ADAM_REBUILD_STATE_EQUIVALENCE",
+              json.dumps({"optimizer_buffers":len(rebuilt_opt),
+                          "optimizer_restore_max_error":restored_opt_error}),flush=True)
         replaced_models=all_model_states(replacement)
         assert maximum_error(*replaced_models)<1e-6
         recovered_err=maximum_error(models0[0],replaced_models[0])
