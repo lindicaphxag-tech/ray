@@ -78,3 +78,20 @@ This is materially stronger than a source-only mocked recovery: the killed Ray p
 **Scope:** the coordinator was alive throughout, the checkpoint remained available in the parent Python process, and the entire group was rebuilt. Not tested: automatic production failover, persistent checkpoint durability, actor failures *during* the apply/commit stage, model/optimizer state checksum beyond inspected tensor state, Ray placement groups across real machines, malicious/non-responsive nodes, or the reward/throughput tradeoff under natural training workloads. Group destruction and creation may take seconds; this test is an existence/correctness witness, not proof of a fast low-disruption recovery architecture.
 
 **Decision:** Before submitting any new upstream production implementation, discuss with maintainers whether the right scope is an opt-in `LearnerGroup` commit/quiescence method incorporating membership ACKs and fail-closed rebuilding. Existing `#67131` and `#67329` should remain narrow correctness fixes and must not absorb this unreviewed distributed feature.
+
+
+## Recovery-cost measurement and terminate-then-probe synchronization
+
+[Final fully green native two-Learner Actions #40005461182](https://github.com/lindicaphxag-tech/ray/actions/runs/40005461182) completed true asynchronous DDP update/restore, verified every expected Learner ACK while healthy, **confirmed physical actor death through direct Ray RPC (without touching the actor manager's cached state)**, refused the missing member, rebuilt a new 2-worker DDP group from the last authoritative checkpoint, and executed a fresh distributed gradient. All native tensor error/mismatch checks were zero at restore; after new training peer mismatch remained zero.
+
+The test also recorded (same run, CPU shared GitHub runner):
+
+| Operation | Wall time |
+|---|---:|
+| Normal in-place LearnerGroup checkpoint restore, both healthy | **6.220352 ms** |
+| Physical actor-death recovery: shutdown broken group, recreate 2 native DDP Learners and restore complete checkpoint | **4,280.180662 ms** |
+| Observed ratio | **688.09x** |
+
+These are **single-run spans** covering different operations, not matched statistical throughput tests. Full group rebuild is much costlier than an ordinary in-place restore in this fixture; choosing a faster repair requires proving no half-mutated optimizer, selector, version or device state leaks and handling DDP collective membership correctly. The full rebuild remains the measured safety baseline.
+
+An important intermediate test [#40005102034](https://github.com/lindicaphxag-tech/ray/actions/runs/40005102034) exposed *actor-termination synchronization*: a `ray.kill` request is not itself a proof that the process has already died. An immediate fresh membership RPC can still receive a success while actor shutdown is in progress. This **does not contradict** the point-in-time challenge logic—it demonstrates why point-in-time membership checks must be bound to a fence/transaction and why tests must synchronize the physical death before claiming a post-mortem failure. The fixed CI uses direct, manager-independent Ray RPC polling to confirm death before testing stale health metadata and fresh group challenge. Future guarantees require a transaction-scoped decision, not an unattested single ping.
