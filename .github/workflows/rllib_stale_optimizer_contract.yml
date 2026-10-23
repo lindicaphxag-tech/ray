@@ -41,3 +41,8 @@ jobs:
           git show FETCH_HEAD:python/ray/rllib/core/learner/learner.py > /tmp/rllib_learner_official_master.py
           python ci/rllib_same_version_distinct_adam_history.py /tmp/rllib_learner_official_master.py --baseline
           python ci/rllib_optimizer_only_false_weight_publication.py /tmp/rllib_learner_official_master.py --baseline
+      - name: Exhaustively check short asynchronous packet orderings against production code
+        run: |
+          python ci/rllib_versioned_state_bounded_model_check.py python/ray/rllib/core/learner/learner.py
+          python ci/rllib_versioned_state_bounded_model_check.py /tmp/rllib_learner_unmodified.py --baseline
+          python ci/rllib_versioned_state_bounded_model_check.py /tmp/rllib_learner_official_master.py --baseline
