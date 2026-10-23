@@ -71,11 +71,59 @@ def mutate_first_weight(module_state):
     raise AssertionError("no float parameter in native policy")
 
 
+@ray.remote(num_cpus=0)
+class EpochAuthority:
+    """Single-authority read lease; deliberately not process-crash durable."""
+    def __init__(self):
+        self.live_epoch=None
+        self.pending=None
+        self.fenced=True
+
+    def bootstrap(self,epoch):
+        assert self.live_epoch is None
+        self.live_epoch=epoch
+
+    def begin(self,new_epoch):
+        assert not self.fenced and self.pending is None
+        assert new_epoch>self.live_epoch
+        self.fenced=True
+        self.pending=new_epoch
+        return self.snapshot()
+
+    def abort(self,new_epoch):
+        assert self.pending==new_epoch
+        self.pending=None
+        self.fenced=True
+        return self.snapshot()
+
+    def release_recovered(self,epoch):
+        assert self.pending is None and self.live_epoch==epoch
+        self.fenced=False
+        return self.snapshot()
+
+    def publish(self,epoch,acks):
+        assert self.pending==epoch and len(acks)==2
+        assert all(x["status"]=="PREPARED" and x["snapshot"]["local_version"]==epoch
+                   for x in acks),acks
+        self.live_epoch=epoch
+        self.pending=None
+        self.fenced=False
+        return self.snapshot()
+
+    def can_train(self,epoch):
+        return not self.fenced and self.live_epoch==epoch
+
+    def snapshot(self):
+        return {"live_epoch":self.live_epoch,"pending":self.pending,
+                "fenced":self.fenced}
+
+
 @ray.remote(num_cpus=1)
 class FencedNativeLearner:
-    def __init__(self,source,rank):
+    def __init__(self,source,rank,authority):
         patch_real_set_state(source)
         self.rank=rank
+        self.authority=authority
         self.env=gym.make("CartPole-v1")
         self.learner=BaseTestingAlgorithmConfig().build_learner(env=self.env)
         self.epoch=None
@@ -161,6 +209,10 @@ class FencedNativeLearner:
         return self.status()
 
     def train_probe(self):
+        # This authorization check is made at the actual wrapper's read path.
+        # Even a delayed/missing local fence cannot override authority fencing.
+        if not ray.get(self.authority.can_train.remote(self.epoch)):
+            return {"actor":self.rank,"result":"AUTHORITY_FENCED"}
         if not self.train_allowed or self.quarantined:
             return {"actor":self.rank,"result":"BLOCKED"}
         # A real Learner module eligibility gate, not a reward claim.
@@ -191,14 +243,16 @@ def run():
     source=str(pathlib.Path(sys.argv[1]).resolve())
     ray.init(num_cpus=4,include_dashboard=False,ignore_reinit_error=True,
              log_to_driver=False)
-    actors=[FencedNativeLearner.remote(source,i) for i in range(2)]
-    results=[]
+    authority=EpochAuthority.remote()
+    actors=[FencedNativeLearner.remote(source,i,authority) for i in range(2)]
     try:
         authoritative=ray.get(actors[0].initial_snapshot.remote())
         start=time.perf_counter()
         first=ray.get([a.restore.remote(authoritative,1) for a in actors])
         assert all(not x["train_allowed"] for x in first)
+        ray.get(authority.bootstrap.remote(1))
         first=ray.get([a.resume_recovered.remote(1) for a in actors])
+        ray.get(authority.release_recovered.remote(1))
         assert_same(actors,1,True)
         assert all(x["result"]=="ELIGIBLE" for x in ray.get(
             [a.train_probe.remote() for a in actors]))
@@ -211,8 +265,12 @@ def run():
         intended["should_module_be_updated"]={"blocked_other_policy"}
 
         t0=time.perf_counter()
+        ray.get(authority.begin.remote(2))
+        # Even BEFORE local fences arrive, authority rejects training.
+        assert all(x["result"]=="AUTHORITY_FENCED" for x in ray.get(
+            [a.train_probe.remote() for a in actors]))
         ray.get([a.fence.remote() for a in actors])
-        assert all(x["result"]=="BLOCKED" for x in ray.get(
+        assert all(x["result"]=="AUTHORITY_FENCED" for x in ray.get(
             [a.train_probe.remote() for a in actors]))
         ack=ray.get([actors[0].stage.remote(intended,2),
                      actors[1].stage.remote(intended,2,inject_selector_failure=True)])
@@ -220,8 +278,9 @@ def run():
         witness=ack[1]["snapshot"]
         assert witness["local_version"]==2 and witness["committed_epoch"]==1,witness
         assert witness["default_trainable"] is True,witness
-        assert all(x["result"]=="BLOCKED" for x in ray.get(
+        assert all(x["result"]=="AUTHORITY_FENCED" for x in ray.get(
             [a.train_probe.remote() for a in actors]))
+        ray.get(authority.abort.remote(2))
         t1=time.perf_counter()
         print("FAILURE_FENCED",json.dumps({"acks":ack,"stage_ms":(t1-t0)*1000}),flush=True)
 
@@ -229,10 +288,13 @@ def run():
         # from the LAST AUTHORITATIVELY COMMITTED state (epoch 1).
         restored=ray.get([a.restore.remote(authoritative,1) for a in actors])
         assert_same(actors,1,False)
-        assert all(x["result"]=="BLOCKED" for x in ray.get(
+        assert all(x["result"]=="AUTHORITY_FENCED" for x in ray.get(
             [a.train_probe.remote() for a in actors]))
         ray.get([a.resume_recovered.remote(1) for a in actors])
         restored_live=assert_same(actors,1,True)
+        assert all(x["result"]=="AUTHORITY_FENCED" for x in ray.get(
+            [a.train_probe.remote() for a in actors]))
+        ray.get(authority.release_recovered.remote(1))
         assert all(x["result"]=="ELIGIBLE" for x in ray.get(
             [a.train_probe.remote() for a in actors]))
         recovery_ms=(time.perf_counter()-t1)*1000
@@ -240,13 +302,41 @@ def run():
                                             "state":restored_live}),flush=True)
 
         # Retry the newer complete epoch after authoritative rebuild.
+        # Acknowledge loss: both workers have installed, but coordinator
+        # receives only one ACK. It MUST abort, not publish.
+        ray.get(authority.begin.remote(2))
+        ray.get([a.fence.remote() for a in actors])
+        missing_ack=ray.get([a.stage.remote(intended,2) for a in actors])
+        assert all(x["status"]=="PREPARED" for x in missing_ack),missing_ack
+        assert all(x["result"]=="AUTHORITY_FENCED" for x in ray.get(
+            [a.train_probe.remote() for a in actors]))
+        ray.get(authority.abort.remote(2))
+        ray.get([a.restore.remote(authoritative,1) for a in actors])
+        assert_same(actors,1,False)
+        ray.get([a.resume_recovered.remote(1) for a in actors])
+        ray.get(authority.release_recovered.remote(1))
+        assert_same(actors,1,True)
+        print("MISSING_ACK_ABORT correctly recovered both installed actors to e1",
+              flush=True)
+
         t2=time.perf_counter()
+        ray.get(authority.begin.remote(2))
         ray.get([a.fence.remote() for a in actors])
         good=ray.get([a.stage.remote(intended,2) for a in actors])
         assert all(x["status"]=="PREPARED" for x in good),good
+        assert all(x["result"]=="AUTHORITY_FENCED" for x in ray.get(
+            [a.train_probe.remote() for a in actors]))
+        # Global epoch publication only after verifying both stage ACKs.
+        ray.get(authority.publish.remote(2,good))
         assert all(x["result"]=="BLOCKED" for x in ray.get(
             [a.train_probe.remote() for a in actors]))
-        committed=ray.get([a.admit.remote(2) for a in actors])
+        # Delayed local commit notification: first actor has e2 lease while
+        # second remains locally fenced; second cannot train prematurely.
+        one=ray.get(actors[0].admit.remote(2))
+        delayed=ray.get(actors[1].train_probe.remote())
+        assert delayed["result"]=="BLOCKED",delayed
+        assert ray.get(actors[0].train_probe.remote())["result"]=="SELECTOR_BLOCKED"
+        committed=[one,ray.get(actors[1].admit.remote(2))]
         assert_same(actors,2,True)
         assert all(x["result"]=="SELECTOR_BLOCKED" for x in ray.get(
             [a.train_probe.remote() for a in actors]))
