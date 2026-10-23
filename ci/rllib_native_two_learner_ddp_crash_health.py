@@ -147,6 +147,35 @@ def all_optimizer_states(group):
         }))]
 
 
+def optimizer_update_config(learner):
+    """Actual Adam group defaults and ordered parameter names at live update."""
+    names={id(tensor):name
+           for name,tensor in learner.module[DEFAULT_MODULE_ID].named_parameters()}
+    result={}
+    for optim_name,optimizer in sorted(learner._named_optimizers.items()):
+        groups=[]
+        for group in optimizer.param_groups:
+            attrs={}
+            for key,value in group.items():
+                if key=="params":
+                    attrs["parameter_names"]=[
+                        names.get(id(p),"<UNMATCHED>"+str(tuple(p.shape)))
+                        for p in value]
+                elif isinstance(value,(int,float,bool,str)) or value is None:
+                    attrs[key]=value
+                elif isinstance(value,(tuple,list)):
+                    attrs[key]=list(value)
+                else:
+                    attrs[key]=str(value)
+            groups.append(attrs)
+        result[optim_name]=groups
+    return result
+
+
+def all_optimizer_update_config(group):
+    return [r.get() for r in group.foreach_learner(optimizer_update_config)]
+
+
 def checked_optimizer_error(a,b,*,atol=1e-6,rtol=1e-5):
     assert a.keys()==b.keys(),(a.keys()-b.keys(),b.keys()-a.keys())
     max_delta=0.0
@@ -283,6 +312,9 @@ def main():
                           "leader_to_checkpoint_max_error":optimizer_max_abs_difference(
                               warm_optimizer,warm_peer_opt[0])}),flush=True)
         # Counterfactual: uninterrupted continuation from the warm checkpoint.
+        reference_optimizer_config=all_optimizer_update_config(group)
+        print("REFERENCE_OPTIMIZER_APPLY_CONFIG",
+              json.dumps(reference_optimizer_config,sort_keys=True),flush=True)
         trace_ready=group.foreach_learner(install_batch_provenance)
         assert len(trace_ready)==2 and all(r.ok and r.get() for r in trace_ready)
         healthy_continuation=group.update(batch=batch,async_update=False)
@@ -397,6 +429,12 @@ def main():
                               recovered_peer_optimizer[0],recovered_peer_optimizer[1]),
                           "leader_to_warm_max_error":optimizer_max_abs_difference(
                               warm_optimizer,recovered_peer_optimizer[0])}),flush=True)
+        restored_optimizer_config=all_optimizer_update_config(replacement)
+        print("RECOVERED_OPTIMIZER_APPLY_CONFIG",
+              json.dumps(restored_optimizer_config,sort_keys=True),flush=True)
+        print("ADAM_UPDATE_CONFIGURATION_MATCHES",
+              json.dumps({"same_per_rank":reference_optimizer_config==restored_optimizer_config}),
+              flush=True)
         assert maximum_error(*replaced_models)<1e-6
         recovered_err=maximum_error(models0[0],replaced_models[0])
         assert recovered_err<1e-5,recovered_err
