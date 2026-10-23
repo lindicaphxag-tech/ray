@@ -18,7 +18,7 @@ Define:
 
 - Authority: `(e_public, e_candidate, fenced)`
 - Actor i: `(e_local, e_staged, ready, W_i, O_i, T_i)`
-- Training admission within this wrapper: `ready_i ∧ ¬fenced ∧ (e_local_i = e_public)`.
+- Training admission within this wrapper: obtain a central **epoch lease ticket** while `ready_i ∧ ¬fenced ∧ (e_local_i = e_public)`. Release it on completion. The coordinator rejects `begin(new_epoch)` while any ticket is held.
 - Begin update: authority fences **before** any per-actor stop signal; actors cannot train after that point *for a newly started wrapper-mediated operation*.
 - Prepare: every actor installs complete `(W,O,T)` while locally fenced. The coordinator must collect `PREPARED` acknowledgements from both.
 - Abort: if any stage fails or even one ACK is unavailable, **do not publish the candidate version**. Recreate **both Learners** from the prior authoritative complete checkpoint, verify their local weight fingerprints and epoch, then un-fence authority.
@@ -54,7 +54,7 @@ Single CI run wall times: initial startup-coordination 189.94 ms; fault stage + 
 - After reconstruction, two Actors regain identical parameter fingerprints/versions; an accepted update can eventually be published.
 
 **NOT proven, and not to be claimed:**
-- `can_train` is currently a **point-in-time check**, not a held lease. An in-flight training operation may race with authority `begin` after it passed its check. True quiescence needs acquire/release epochs, an in-flight counter, and barrier drain before any in-place staging. The source code does not yet implement this.
+- The upgraded wrapper **does** implement an in-memory epoch ticket counter and reject `begin` while test-wrapper tickets remain active. It has NOT integrated ticket acquisition/release around actual `Learner.update`, all `LearnerGroup` call paths, remote gradient jobs, or crash cleanup for abandoned tickets. Hence real native gradient-update quiescence is **not proven**.
 - The coordinator is **not crash durable**, its epoch state and authoritative checkpoint are held in memory, and epoch labels/ACKs are not cryptographically authenticated.
 - Accessors to the raw `Learner` outside the wrapper bypass its checks, so this is not a complete Ray LearnerGroup API change.
 - Checksums compare RLModule weights, not optimizer state history, selector semantics or device memory. State transfer intent/writer identity remain under-specified.
@@ -66,3 +66,16 @@ Single CI run wall times: initial startup-coordination 189.94 ms; fault stage + 
 The next engineering step is not to rename this a generalized 2PC innovation. Build a native `acquire(epoch)/release(ticket)` train/update wrapper whose authority refuses staging until all in-flight epoch tickets drain; add a real suspended training-step test and fault injection for actor crashes/ack timeouts. Only then propose a narrowly scoped upstream design, **after** maintainers decide if fail-stop restoration belongs in `Learner`, `LearnerGroup` or the checkpoint coordinator.
 
 The existing official [Ray PR #67131](https://github.com/ray-project/ray/pull/67131) remains Open with Buildkite Microcheck failure; this prototype deliberately does not modify it.
+
+
+## Third independent native CI: epoch lease drain and TOCTOU reduction
+
+[GitHub Actions #39993877260](https://github.com/lindicaphxag-tech/ray/actions/runs/39993877260) completed **SUCCESS** after an intermediate, transparent failure due to a mistaken expected denial label (`BLOCKED` instead of the more precise `AUTHORITY_FENCED`). The new protocol adds `EpochAuthority.acquire(epoch)` and `release(ticket)`, with `begin(e)` rejecting a new epoch if any outstanding ticket remains.
+
+**New precondition actually tested on two real Ray actors:** Actor 0 held a ticket while the controller requested `begin(2)`. The authority threw a controlled `RuntimeError` without fencing/starting publication. After the actor released the ticket, the same update could begin. Output: `TRAINING_LEASE_DRAIN: rejected begin until in-flight ticket released`.
+
+All earlier independent probes still passed: authority-first fencing before local stop, selector setter exception on actor 1, both-actor authoritative epoch-1 rebuild, failure to publish after an intentionally withheld ACK, second rebuild, publication after both ACKs, delayed local commit notification, finally agreement on committed epoch 2 and the blocked default-policy selector.
+
+Measured single-run operation spans: fault staging **9.18 ms**, first authoritative recovery **28.69 ms**, successful final update **17.15 ms**. Warm-run and instrumentation variability mean no reliable speedup or amortized throughput claim.
+
+**Key remaining gap:** the held training lease was exercised by a deterministic actor wrapper, not a concurrent real `Learner.update` gradient step. Correct production integration must atomically acquire/release tickets around *all* gradient and snapshot operations and handle actor crash/lease expiry without releasing still-active operations prematurely. No new Ray upstream production PR was created by this result.
