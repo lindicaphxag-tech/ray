@@ -1,0 +1,36 @@
+name: RLlib self-play native pytest (Ray wheel CPU)
+on:
+  pull_request:
+    paths:
+      - "python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py"
+      - "python/ray/rllib/examples/multi_agent/utils/test_self_play_league_based_callback.py"
+      - ".github/workflows/rllib_selfplay_native_cpu.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: python/requirements.txt
+      - name: Install released Ray native extension and RLlib runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "ray[rllib]" pytest
+      - name: Display exact installed package resolution
+        run: |
+          python -c "import ray,sys; print('ray version', ray.__version__, 'installed ray path', ray.__file__, 'python', sys.version)"
+          python -m pip show ray
+      - name: Compile PR's native test and callback
+        run: |
+          python -m py_compile python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py
+          python -m py_compile python/ray/rllib/examples/multi_agent/utils/test_self_play_league_based_callback.py
+      - name: Run actual native test methods on checked-out Ray source
+        run: |
+          PYTHONPATH="$PWD/python" python -m pytest -q -vv python/ray/rllib/examples/multi_agent/utils/test_self_play_league_based_callback.py
