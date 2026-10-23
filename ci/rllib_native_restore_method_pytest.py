@@ -10,6 +10,8 @@ import argparse
 import ast
 from contextlib import redirect_stdout, redirect_stderr
 import io
+import shutil
+import tempfile
 from pathlib import Path
 
 parser = argparse.ArgumentParser()
@@ -35,10 +37,16 @@ algorithm_module.Algorithm.restore_env_runners = scope["restore_env_runners"]
 print("native test method source", args.algorithm_file,flush=True)
 
 output = io.StringIO()
-with redirect_stdout(output), redirect_stderr(output):
-    code = pytest.main(["-q","-vv","--tb=short",
-        str(args.test_file),
-        "-k","test_restore_env_runner_reinstates_runtime_multi_agent_routing"])
+# Installed PyPI Ray omits ray.tests, while the repo's parent conftest imports
+# it. Copy the unchanged native test to an isolated pytest root so its test
+# method executes against the released Ray wheel, not the repository conftest.
+with tempfile.TemporaryDirectory(prefix="rllib-native-restore-") as root:
+    test_copy = Path(root) / "test_algorithm.py"
+    shutil.copy2(args.test_file, test_copy)
+    with redirect_stdout(output), redirect_stderr(output):
+        code = pytest.main(["-q","-vv","--tb=short",
+            "--confcutdir", root, str(test_copy),
+            "-k","test_restore_env_runner_reinstates_runtime_multi_agent_routing"])
 text = output.getvalue()
 print(text,flush=True)
 if args.baseline:
