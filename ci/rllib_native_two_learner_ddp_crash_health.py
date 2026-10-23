@@ -147,6 +147,30 @@ def all_optimizer_states(group):
         }))]
 
 
+def live_parameter_bound_adam(learner):
+    """Hash Adam state attached to *actual model Parameters*, not numbered slots."""
+    named={id(p):name for name,p in
+           learner.module[DEFAULT_MODULE_ID].named_parameters()}
+    output={}
+    for optim_name,optim in sorted(learner._named_optimizers.items()):
+        for p,stat in optim.state.items():
+            pname=named.get(id(p),"<UNKNOWN_PARAMETER>")
+            if pname=="<UNKNOWN_PARAMETER>":
+                raise AssertionError("Adam state belongs to unrecognized parameter")
+            for field,value in stat.items():
+                a=value.detach().cpu().numpy() if hasattr(value,"detach") else np.asarray(value)
+                h=hashlib.sha256()
+                h.update(str(a.shape).encode())
+                h.update(str(a.dtype).encode())
+                h.update(a.tobytes())
+                output[f"{optim_name}/{pname}/{field}"]=h.hexdigest()
+    return output
+
+
+def all_live_parameter_bound_adam(group):
+    return [r.get() for r in group.foreach_learner(live_parameter_bound_adam)]
+
+
 def optimizer_update_config(learner):
     """Actual Adam group defaults and ordered parameter names at live update."""
     names={id(tensor):name
@@ -313,6 +337,9 @@ def main():
                               warm_optimizer,warm_peer_opt[0])}),flush=True)
         # Counterfactual: uninterrupted continuation from the warm checkpoint.
         reference_optimizer_config=all_optimizer_update_config(group)
+        reference_named_adam=all_live_parameter_bound_adam(group)
+        print("REFERENCE_NAMED_PARAMETER_BOUND_ADAM",
+              json.dumps(reference_named_adam,sort_keys=True),flush=True)
         print("REFERENCE_OPTIMIZER_APPLY_CONFIG",
               json.dumps(reference_optimizer_config,sort_keys=True),flush=True)
         trace_ready=group.foreach_learner(install_batch_provenance)
@@ -430,6 +457,12 @@ def main():
                           "leader_to_warm_max_error":optimizer_max_abs_difference(
                               warm_optimizer,recovered_peer_optimizer[0])}),flush=True)
         restored_optimizer_config=all_optimizer_update_config(replacement)
+        restored_named_adam=all_live_parameter_bound_adam(replacement)
+        print("RESTORED_NAMED_PARAMETER_BOUND_ADAM",
+              json.dumps(restored_named_adam,sort_keys=True),flush=True)
+        print("NAME_BOUND_ADAM_MOMENTS_MATCH",
+              json.dumps({"same_per_rank":reference_named_adam==restored_named_adam}),
+              flush=True)
         print("RECOVERED_OPTIMIZER_APPLY_CONFIG",
               json.dumps(restored_optimizer_config,sort_keys=True),flush=True)
         print("ADAM_UPDATE_CONFIGURATION_MATCHES",
