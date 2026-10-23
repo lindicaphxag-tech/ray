@@ -142,3 +142,28 @@ certificate would be a **separate** design requiring maintainer discussion.
 This is an application of a standard indistinguishability argument, not
 a new general information-theoretic theorem. No L9 originality or
 upstream acceptance is inferred from this certificate.
+
+
+## Verified actual training-step consequence
+
+A stronger check now uses the installed Ray 2.59.0 Learner and Ray's own
+CartPole JSON training-data reader (a 200-row converted batch) rather than
+only mocks or synthetic gradient vectors. The actual production
+`Learner.set_state` method is injected unchanged from the candidate or
+pinned earlier two-component patch into the same compatible Ray runtime.
+
+With an equal-version rejected checkpoint whose stale selector would set
+`policies_to_train={"stale_opponent"}`, the previous patch filters out the
+live `default_policy`. In the tested Ray wheel, the ensuing update
+raises `UnboundLocalError` on its no-module loss path, with **zero model
+parameter change**. The three-component admission rule keeps the live
+selector; the real Learner update returns a `default_policy` result
+and changes a model parameter by **max absolute 0.001000002027**.
+
+The expected baseline error is specific to this Ray wheel version; other
+versions may simply skip the empty update rather than raise. The sample
+batch is fixed by the repository fixture; this is one training step, not
+a long-horizon return/throughput or statistical optimization benchmark.
+
+[All-green native test and true-gradient GitHub Actions](https://github.com/lindicaphxag-tech/ray/actions/runs/39923421681)
+· [One-step production-Learner code](https://github.com/lindicaphxag-tech/ray/blob/research/rllib-trainable-policy-state-coherence-20261023/ci/rllib_real_training_selector_red_green.py).
