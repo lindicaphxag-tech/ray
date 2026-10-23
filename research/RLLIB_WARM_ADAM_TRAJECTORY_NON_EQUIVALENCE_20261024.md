@@ -55,3 +55,37 @@ Existing experiments support restricted (A) with a userland coordinator and nati
 [Source instrumenting actual Ray LearnerGroup workers](https://github.com/lindicaphxag-tech/ray/blob/research/rllib-state-commit-failstop-20261024/ci/rllib_native_two_learner_ddp_crash_health.py)
 
 [Exact native CI definition](https://github.com/lindicaphxag-tech/ray/blob/research/rllib-state-commit-failstop-20261024/.github/workflows/rllib_native_two_learner_ddp_crash_health.yml)
+
+
+## Decisive no-actor-crash control — completed successfully
+
+[Native Ray 2.59.0 two-Learner DDP GitHub Actions #40011006462](https://github.com/lindicaphxag-tech/ray/actions/runs/40011006462) completed a standalone **no-kill** experiment. It built a healthy 2-LearnerGroup, executed a genuine update to warm Adam, saved the complete checkpoint, executed another healthy DDP update as the reference, **shut down the healthy group without physically killing an Actor**, created a brand-new group with the same configuration, restored the warm checkpoint and trained the same supplied batch object once more.
+
+Observed values (one CPU CI run):
+
+| Metric | Value |
+|---|---:|
+| Saved numerical optimizer buffers | 12 |
+| New group initial model tensor max error vs checkpoint | **0** |
+| New group initial numerical Adam-buffer max error vs checkpoint | **0** |
+| Optimizer param-group configuration match | true |
+| Next-step model max difference vs uninterrupted healthy group | **0.00037486106157302856** |
+| Next-step optimizer max difference vs uninterrupted healthy group | **0.00190426642075181** |
+| Next-step mismatch between two workers in recreated group | **0.00037267059087753296** |
+| Fresh 2-worker group creation + warm restore span | **4,468.65 ms** |
+
+**Result:** `NO_CRASH_RECONSTRUCTION_TRAJECTORY_NON_EQUIVALENCE_OBSERVED`; `NO_CRASH_CONTROL_COMPLETED`; workflow **success** signifies successful execution of the *diagnostic*, NOT successful trajectory parity.
+
+**Causal attribution improved:** the observed warm-checkpoint next-update divergence **does not require a physical Ray Actor crash**. The independent crash/rebuild diagnostic is compatible with a more general fresh-LearnerGroup continuation boundary or a nondeterministic aspect of the test/runtime. Calling the effect 'caused by crash recovery' is therefore unsupported.
+
+**Still not proven:** This particular no-kill script reuses the same input MultiAgentBatch object, but does **not itself** hash each per-Learner sharded objective batch and gradient. Separate physically killed-worker diagnostics did show equal per-rank SHA256 for actual inputs, backward gradients and postprocessed gradient tensors. A definitive production root-cause claim still needs no-kill per-rank batch/gradient audit and no-rebuild repeated healthy controls, ideally against the current Ray upstream commit, to rule out harness or runtime details.
+
+**Reproduction code:** [no-crash control](https://github.com/lindicaphxag-tech/ray/blob/research/rllib-state-commit-failstop-20261024/ci/rllib_native_ddp_no_crash_rebuild_control.py), [workflow](https://github.com/lindicaphxag-tech/ray/blob/research/rllib-state-commit-failstop-20261024/.github/workflows/rllib_native_ddp_no_crash_rebuild.yml).
+
+### Implication for the flagship research direction
+
+Before pursuing *low-cost partial Actor repair*, define and verify a **sufficient distributed training checkpoint** including model weights, optimizer buffers, parameter mapping, selected trainability rules, declared input/shard provenance and any runtime/scheduler state that materially changes the next optimizer step. An optimized repair that retains inaccurate next-step dynamics has not met the algorithmic standard, regardless of its restart-time speedup.
+
+The current evidence falsifies simple claims of warm-Adam one-step parity under the tested setup; it does not prove a generally new checkpoint algorithm, nor that Ray lacks a supported way to restore a valid distributed training configuration.
+
+**Next minimum experiment:** actual per-worker postprocessed gradient hashes in the no-kill control, followed by a same-process/no-rebuild replay baseline that respects weight-sequence admission semantics; investigate optimizer update internals, scheduler state and DDP collective reinitialization. If reproducible on a supported current upstream branch, submit the smallest causal reproducer to maintainers before proposing implementation.
