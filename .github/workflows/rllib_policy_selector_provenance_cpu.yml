@@ -1,0 +1,56 @@
+name: RLlib policy-selector provenance red-green (CPU)
+on:
+  push:
+    branches:
+      - research/rllib-trainable-policy-state-coherence-20261023
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  selector-source-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Fetch previous minimal candidate for adversarial comparison
+        run: |
+          git fetch --no-tags --depth=1 https://github.com/lindicaphxag-tech/ray.git c31c743e3faf4d304e96e0da158ceee34d3f1a54
+          git show FETCH_HEAD:python/ray/rllib/core/learner/learner.py > /tmp/previous_learner.py
+      - name: Check real production method selector lineage red-green
+        run: |
+          python -m py_compile python/ray/rllib/core/learner/learner.py
+          python -m py_compile ci/rllib_stale_training_selector_contract.py
+          python ci/rllib_stale_training_selector_contract.py
+          python ci/rllib_stale_training_selector_contract.py /tmp/previous_learner.py --baseline
+  native-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install consistent Ray wheel and real Torch CPU
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install "ray[rllib]==2.59.0" pytest
+      - name: Copy exactly two production sources and native test methods
+        run: |
+          git fetch --no-tags --depth=1 https://github.com/lindicaphxag-tech/ray.git c31c743e3faf4d304e96e0da158ceee34d3f1a54
+          git show FETCH_HEAD:python/ray/rllib/core/learner/learner.py > /tmp/previous_learner.py
+          cp python/ray/rllib/core/learner/learner.py /tmp/candidate_learner.py
+          cp python/ray/rllib/core/learner/tests/test_learner.py /tmp/native_test_learner.py
+          cp ci/rllib_native_trainable_selector_red_green.py /tmp/
+      - name: Run actual native TestLearner methods in one Ray runtime
+        env:
+          RAY_DISABLE_DOCKER_CPU_WARNING: "1"
+          RAY_DEDUP_LOGS: "0"
+          PYTHONPATH: "/tmp"
+        run: |
+          cd /tmp
+          python rllib_native_trainable_selector_red_green.py /tmp/native_test_learner.py /tmp/candidate_learner.py
+          python rllib_native_trainable_selector_red_green.py /tmp/native_test_learner.py /tmp/previous_learner.py --baseline
