@@ -38,14 +38,19 @@ jobs:
           PY
       - name: Original installed native Ray optimizer ownership regression must fail
         run: |
-          set +e
+          cp python/ray/rllib/core/learner/tests/test_torch_optimizer_restore_ownership.py /tmp/test_ray_optimizer_owned_checkpoint.py
           cd /tmp
-          python -m pytest -x -q "$GITHUB_WORKSPACE/python/ray/rllib/core/learner/tests/test_torch_optimizer_restore_ownership.py"
-          result=$?
+          set +e
+          python -m pytest -x -q test_ray_optimizer_owned_checkpoint.py 2>&1 | tee /tmp/stock_ray_red.log
+          result=${PIPESTATUS[0]}
           set -e
           echo "STOCK_RAY_TEST_EXIT_CODE=$result"
-          if [ "$result" -eq 0 ]; then
-            echo "Unexpected: original stock wheel passed ownership witness"
+          if [ "$result" -ne 1 ]; then
+            echo "Unexpected: stock Ray did not produce expected assertion failure"
+            exit 1
+          fi
+          if ! grep -E 'optimizer buffer aliases input checkpoint|in-place Adam step mutated checkpoint' /tmp/stock_ray_red.log; then
+            echo "Unexpected: failure is unrelated to checkpoint storage ownership"
             exit 1
           fi
           echo "STOCK_RAY_OWNERSHIP_WITNESS_RED_CONFIRMED"
@@ -62,5 +67,5 @@ jobs:
       - name: Patched native Ray optimizer checkpoint ownership must pass
         run: |
           cd /tmp
-          python -m pytest -q "$GITHUB_WORKSPACE/python/ray/rllib/core/learner/tests/test_torch_optimizer_restore_ownership.py"
+          python -m pytest -q test_ray_optimizer_owned_checkpoint.py
           echo "PATCHED_RAY_OWNERSHIP_REGRESSION_GREEN_CONFIRMED"
