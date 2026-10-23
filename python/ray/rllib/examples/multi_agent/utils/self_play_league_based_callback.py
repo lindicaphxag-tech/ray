@@ -267,7 +267,8 @@ class SelfPlayLeagueBasedCallback(RLlibCallback):
                 # when WEIGHTS_SEQ_NO already matches, so force a module-only state.
                 if initializing_exploiters:
                     module_states = {
-                        mid: multi_rl_module[mid].get_state() for mid in modules_to_install
+                        mid: multi_rl_module[mid].get_state()
+                        for mid in modules_to_install
                     }
                 else:
                     module_states = {new_mod_id: source_module_state}
