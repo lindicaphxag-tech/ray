@@ -21,7 +21,7 @@ jobs:
         run: |
           python -m py_compile python/ray/rllib/core/learner/learner.py python/ray/rllib/core/learner/tests/test_learner.py
           ruff check python/ray/rllib/core/learner/learner.py python/ray/rllib/core/learner/tests/test_learner.py
-          black --check python/ray/rllib/core/learner/learner.py python/ray/rllib/core/learner/tests/test_learner.py
+          black --diff --check python/ray/rllib/core/learner/learner.py python/ray/rllib/core/learner/tests/test_learner.py
   selector-source-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 7
