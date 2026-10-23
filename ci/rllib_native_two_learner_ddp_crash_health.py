@@ -165,6 +165,23 @@ def main():
         target=manager._actors[ids[0]]
         ray.kill(target,no_restart=True)
         killed=True
+        # ray.kill requests actor termination, but a concurrently issued RPC
+        # can still be accepted before the process actually exits. Synchronize
+        # on a DIRECT Ray actor RPC, not via the manager, so cached health
+        # remains unchanged until the membership challenge itself runs.
+        death_observed=False
+        deadline=time.monotonic()+15
+        while time.monotonic()<deadline:
+            try:
+                ray.get(target.apply.remote(lambda actor: True),timeout=2)
+            except ray.exceptions.RayActorError:
+                death_observed=True
+                break
+            except ray.exceptions.GetTimeoutError:
+                pass
+            time.sleep(.02)
+        assert death_observed,"Ray killed actor but no observed death within deadline"
+        print("DIRECT_ACTOR_DEATH_CONFIRMED_BEFORE_MEMBERSHIP_CHECK",flush=True)
         count_at_loss=manager.num_outstanding_async_reqs()
         healthy_before_ping=manager.num_healthy_actors()
         print("KILLED_ACTOR_BEFORE_LIVENESS_PROBE",
