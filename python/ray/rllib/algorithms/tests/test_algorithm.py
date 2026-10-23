@@ -56,7 +56,8 @@ class TestAlgorithm(unittest.TestCase):
                 self[module_id] = module
 
         source = MagicMock()
-        mapping_fn = lambda *args, **kwargs: "league_1"
+        def mapping_fn(*args, **kwargs):
+            return "league_1"
         source.config = SimpleNamespace(
             policy_mapping_fn=mapping_fn,
             policies_to_train={"main", "league_1"},
