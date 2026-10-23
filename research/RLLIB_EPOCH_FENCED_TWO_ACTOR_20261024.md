@@ -79,3 +79,22 @@ All earlier independent probes still passed: authority-first fencing before loca
 Measured single-run operation spans: fault staging **9.18 ms**, first authoritative recovery **28.69 ms**, successful final update **17.15 ms**. Warm-run and instrumentation variability mean no reliable speedup or amortized throughput claim.
 
 **Key remaining gap:** the held training lease was exercised by a deterministic actor wrapper, not a concurrent real `Learner.update` gradient step. Correct production integration must atomically acquire/release tickets around *all* gradient and snapshot operations and handle actor crash/lease expiry without releasing still-active operations prematurely. No new Ray upstream production PR was created by this result.
+
+## Fourth native result: actual gradient-step overlap, not merely a held dummy ticket
+
+[GitHub Actions #39997227527](https://github.com/lindicaphxag-tech/ray/actions/runs/39997227527) finished **SUCCESS**, using installed `ray[rllib]==2.59.0`, CPU PyTorch, native Ray actors, and the unchanged reviewed production `Learner.set_state` source AST. The source-tree CartPole offline fixture was copied into the installed wheel because PyPI does not ship that test JSON.
+
+Actor 0 acquired a central epoch-1 ticket **inside a wrapper method executing the real native `Learner.update(batch=...)`**, not by calling an empty lease probe. The test intentionally paused for one second **inside the native `before_gradient_based_update` hook** after signaling the authority that gradient update execution had entered. During this hook, the coordinator attempted `begin(2)` and received the expected `in-flight training lease prevents new epoch` error. The actual 200-row CartPole update then completed and changed native policy parameters by max absolute **0.0010000020265579224**. The ticket was released in `finally`. The actor was rebuilt from the last authoritative epoch-1 state to avoid contaminating subsequent cross-actor assertions.
+
+The same CI reran the earlier failure matrix: authority-first gate, independent dummy lease drain, injected selector exception in actor 1, authoritative rollback, deliberately missing one stage ACK, both-actor rebuild, and a delayed local commit acknowledgment. Both finished at epoch 2 with matching model hashes and appropriate selector-based blocking.
+
+**What was and wasn't demonstrated:**
+- A real gradient update can be in flight while a coordinator concurrently requests a checkpoint epoch change; the experimental central lease denies that change until completion.
+- The controlled one-second pause was deliberately injected into a native pre-update hook to guarantee the schedule. It is *not* proof of multi-second GPU kernels or other uninstrumented training paths.
+- The wrapper obtains and releases a ticket around this specific real `Learner.update`. It is **not** integrated into all core Ray LearnerGroup calls, inference/EnvRunner operations, native process crash recovery or dynamically spawned actors.
+- The measured policy parameter delta is proof of a gradient update, not an improvement in return/reward.
+- This single CI does not estimate throughput or lease RPC overhead under load.
+
+**Causal value relative to the previous experiment:** the prior `hold_training_lease()` method only asserted the authority's ticket counter. The current test independently proves the guarded interval contains a real native gradient update with a real batch, and that a concurrent authority request cannot start an in-place checkpoint install during it. This is a stronger correctness experiment, though not a general distributed linearizability theorem.
+
+**Next acceptance requirement:** instrument real parallel `LearnerGroup` / `EnvRunner` pathways, quantify per-step lease overhead versus asynchronous/no-lease and full-barrier baselines, and test actor loss or lease leaks under bounded timeout/recovery before proposing a production API to maintainers.
