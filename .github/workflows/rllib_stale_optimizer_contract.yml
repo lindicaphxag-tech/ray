@@ -32,4 +32,4 @@ jobs:
         run: |
           python ci/rllib_stale_optimizer_transaction_contract.py /tmp/rllib_learner_unmodified.py --baseline
           python ci/rllib_real_adam_partial_restore.py /tmp/rllib_learner_unmodified.py --baseline
-          python ci/rllib_same_version_distinct_adam_history.py /tmp/rllib_learner_unmodified.py
+          python ci/rllib_same_version_distinct_adam_history.py /tmp/rllib_learner_unmodified.py --baseline
