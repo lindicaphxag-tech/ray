@@ -54,15 +54,14 @@ jobs:
             exit 1
           fi
           echo "STOCK_RAY_OWNERSHIP_WITNESS_RED_CONFIRMED"
-      - name: Install production patched TorchLearner source on native wheel
+      - name: Extract exact production method without replacing incompatible wheel module
         run: |
-          python - <<'PY'
-          import pathlib,shutil,ray
-          original=pathlib.Path("python/ray/rllib/core/learner/torch/torch_learner.py")
-          installed=pathlib.Path(ray.__file__).resolve().parent/"rllib/core/learner/torch/torch_learner.py"
-          assert original.is_file() and installed.is_file()
-          shutil.copyfile(original,installed)
-          print("EXACT_SOURCE_PATCH_INSTALLED",installed)
+          cp python/ray/rllib/core/learner/torch/torch_learner.py /tmp/patched_torch_learner.py
+          cp ci/rllib_exact_optimizer_patch_loader.py /tmp/
+          cat > /tmp/conftest.py <<'PY'
+          from rllib_exact_optimizer_patch_loader import patch_class
+          assert patch_class()
+          print("SOURCE_EXACT_CPU_OPTIMIZER_PATCH_INSTALLED")
           PY
       - name: Patched native Ray optimizer checkpoint ownership must pass
         run: |
@@ -72,10 +71,12 @@ jobs:
       - name: Patched real two-Learner CPU DDP next-step trajectory must match exactly
         env:
           RLLIB_ASSERT_PATCHED_NATIVE_PARITY: '1'
+          RLLIB_PATCHED_SOURCE_FILE: '/tmp/patched_torch_learner.py'
         run: |
           python -m py_compile ci/rllib_native_two_learner_ddp_crash_health.py ci/rllib_native_optimizer_ownership_causal_ablation.py
           cp ci/rllib_native_two_learner_ddp_crash_health.py /tmp/
           cp ci/rllib_native_optimizer_ownership_causal_ablation.py /tmp/
+          cp ci/rllib_exact_optimizer_patch_loader.py /tmp/
           cd /tmp
           timeout 600s python -u rllib_native_optimizer_ownership_causal_ablation.py
 
