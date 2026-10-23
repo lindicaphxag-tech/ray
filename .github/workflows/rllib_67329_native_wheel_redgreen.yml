@@ -40,9 +40,9 @@ jobs:
           PY
       - name: Native patched regression must pass
         run: |
-          python -m pytest -q -s --disable-warnings ${{ env.RAY_TEST_PATH }} -k test_set_state_stale_version_preserves_newer_weights_sequence
-        env:
-          RAY_TEST_PATH: python/ray/rllib/env/tests/test_multi_agent_env_runner.py
+          WHEEL_TEST="$(python -c 'import ray, pathlib; print(pathlib.Path(ray.__file__).resolve().parent / "rllib/env/tests/test_multi_agent_env_runner.py")')"
+          echo "Native wheel test: $WHEEL_TEST"
+          (cd /tmp && python -m pytest -q -s --disable-warnings "$WHEEL_TEST" -k test_set_state_stale_version_preserves_newer_weights_sequence)
       - name: Reproduce exact original-version failure in same wheel
         run: |
           python - <<'PY'
@@ -60,10 +60,13 @@ jobs:
           PY
           python - <<'PY'
           import subprocess, sys
+          import pathlib, ray
+          wheel_test = (pathlib.Path(ray.__file__).resolve().parent /
+                        "rllib/env/tests/test_multi_agent_env_runner.py")
           argv = [sys.executable, "-m", "pytest", "-q", "-s",
-                  "python/ray/rllib/env/tests/test_multi_agent_env_runner.py",
+                  str(wheel_test),
                   "-k", "test_set_state_stale_version_preserves_newer_weights_sequence"]
-          result = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+          result = subprocess.run(argv, cwd="/tmp", capture_output=True, text=True, timeout=120)
           print(result.stdout[-5000:], result.stderr[-1200:], flush=True)
           assert result.returncode != 0, "Original implementation incorrectly passed"
           assert "self.assertEqual(runner._weights_seq_no, 8)" in result.stdout, "Did not reproduce target-version failure"
