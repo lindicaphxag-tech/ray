@@ -1,0 +1,39 @@
+name: RLlib native Learner state integration smoke (CPU)
+on:
+  push:
+    branches:
+      - research/rllib-stale-optimizer-transaction-20261023
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-learner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Ray RLlib runtime, native test and torch CPU dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+          python -m pip install "ray[rllib]==2.59.0" pytest
+      - name: Install only the edited Learner source into the compatible Ray wheel
+        run: |
+          python - <<'PY'
+          import ray
+          from pathlib import Path
+          path = Path(ray.__file__).parent / "rllib/core/learner/learner.py"
+          assert path.is_file(), path
+          source = Path("python/ray/rllib/core/learner/learner.py").read_text()
+          path.write_text(source)
+          print("Patched actual imported wheel module:", path)
+          PY
+      - name: Run native TestLearner source with real Ray actor and torch optimizer
+        env:
+          RAY_DISABLE_DOCKER_CPU_WARNING: "1"
+          RAY_DEDUP_LOGS: "0"
+        run: |
+          python -m pytest python/ray/rllib/core/learner/tests/test_learner.py -q -k "stale_paired_module_optimizer or equal_version_paired_state or optimizer_only_future_version or unversioned_module_state_update or stale_module_state_does_not_downgrade"
