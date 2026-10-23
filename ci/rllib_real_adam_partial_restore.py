@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,7 +20,7 @@ import torch
 
 
 def native_learner_set_state():
-    path = Path("python/ray/rllib/core/learner/learner.py")
+    path = Path(sys.argv[1]) if len(sys.argv)>1 and not sys.argv[1].startswith("--") else Path("python/ray/rllib/core/learner/learner.py")
     tree = ast.parse(path.read_text(), filename=str(path))
     clazz = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Learner")
     method = copy.deepcopy(next(node for node in clazz.body if isinstance(node, ast.FunctionDef) and node.name == "set_state"))
@@ -76,6 +77,7 @@ class LearnerAdapter:
 
 
 torch.manual_seed(24681)
+baseline = "--baseline" in sys.argv
 native_method = native_learner_set_state()
 trainable = torch.nn.Parameter(torch.tensor([0.5, -1.25], dtype=torch.float64))
 original_optimizer = torch.optim.Adam([trainable], lr=0.03)
@@ -112,15 +114,23 @@ native_method(stale_replay, checkpoint_v9)
 
 assert stale_replay._weights_seq_no == 10
 assert torch.equal(stale_replay.parameter, correct.parameter)
-assert stale_replay.optimizer.state_dict()["state"][0]["step"].item() == 9
 assert correct.optimizer.state_dict()["state"][0]["step"].item() == 10
-print("REPRODUCED: real Adam step=9 loaded while RLModule weights and version remain v10")
+if baseline:
+    assert stale_replay.optimizer.state_dict()["state"][0]["step"].item() == 9
+    print("EXPECTED BASELINE: real Adam step=9 loaded while module and version remain v10")
+else:
+    assert stale_replay.optimizer.state_dict()["state"][0]["step"].item() == 10
+    print("PASS PATCH: reject stale paired optimizer, preserving Adam step v10")
 
 correct.training_step([2.6, .7])
 stale_replay.training_step([2.6, .7])
 weight_error = torch.linalg.vector_norm(correct.parameter - stale_replay.parameter).item()
-assert weight_error > 1e-5, weight_error
-print(f"REPRODUCED: real Adam next-step update diverges from consistent v10 by L2={weight_error:.12f}")
+if baseline:
+    assert weight_error > 1e-5, weight_error
+    print(f"EXPECTED BASELINE: next Adam step diverges from v10 by L2={weight_error:.12f}")
+else:
+    assert weight_error < 1e-12, weight_error
+    print(f"PASS PATCH: identical next Adam update to consistent v10 (L2={weight_error:.12f})")
 
 # Distinct, legitimate API: an optimizer-only state update must be regarded
 # separately; a proposed paired-restore policy must not silently change it.
