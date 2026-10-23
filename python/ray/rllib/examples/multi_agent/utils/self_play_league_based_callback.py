@@ -238,6 +238,9 @@ class SelfPlayLeagueBasedCallback(RLlibCallback):
                         "main_exploiter_1",
                     ]
                 else:
+                    # The new local module starts from its own default weights.
+                    # Snapshot the existing behavior policy before add_module.
+                    source_module_state = multi_rl_module[module_id].get_state()
                     algorithm.add_module(
                         module_id=new_mod_id,
                         module_spec=RLModuleSpec.from_module(main_module),
@@ -250,9 +253,7 @@ class SelfPlayLeagueBasedCallback(RLlibCallback):
                             "learner_group": {
                                 "learner": {
                                     "rl_module": {
-                                        new_mod_id: multi_rl_module[
-                                            module_id
-                                        ].get_state(),
+                                        new_mod_id: source_module_state,
                                     }
                                 }
                             }
@@ -264,9 +265,13 @@ class SelfPlayLeagueBasedCallback(RLlibCallback):
                 # finish installing their source weights before the mapping update.
                 # The standard sync_weights() path is async and may skip modules
                 # when WEIGHTS_SEQ_NO already matches, so force a module-only state.
-                module_states = {
-                    mid: multi_rl_module[mid].get_state() for mid in modules_to_install
-                }
+                if initializing_exploiters:
+                    module_states = {
+                        mid: multi_rl_module[mid].get_state()
+                        for mid in modules_to_install
+                    }
+                else:
+                    module_states = {new_mod_id: source_module_state}
                 new_module_state = {COMPONENT_RL_MODULE: ray.put(module_states)}
 
                 # Install weights and activate the mapping in one call per
