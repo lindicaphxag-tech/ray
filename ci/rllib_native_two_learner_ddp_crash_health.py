@@ -158,8 +158,12 @@ def install_batch_provenance(learner):
                 for source,target in zip(original_params,clone_params):
                     target.grad=(None if source.grad is None
                                  else source.grad.detach().clone())
-                isolated.step()
+                # Crucial ordering control: the independent replay MUST NOT
+                # run before the native production optimizer. Otherwise
+                # clone loading or tensor references could perturb the native
+                # step and create an observer-induced false counterexample.
                 output=_step(*args,**kwargs)
+                isolated.step()
                 diffs={}
                 for source,target in zip(original_params,clone_params):
                     name=named.get(id(source),"<UNBOUND>")
