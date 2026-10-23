@@ -49,3 +49,28 @@ jobs:
           print("Ray", ray.__version__, "native extension", ray._raylet.__file__, "test", test, flush=True)
           raise SystemExit(subprocess.call([sys.executable, "-m", "pytest", "-q", "-vv", str(test)]))
           PY
+      - name: Verify previous official PR snapshot fails the new clone-source regression
+        run: |
+          python - <<'PY'
+          import pathlib, ray, subprocess, sys, urllib.request
+          base = pathlib.Path(ray.__file__).resolve().parent / "rllib/examples/multi_agent/utils"
+          url = (
+              "https://raw.githubusercontent.com/ray-project/ray/"
+              "639c812ad1f68dc2a6409a59bc0bcc02f4727054/"
+              "python/ray/rllib/examples/multi_agent/utils/self_play_league_based_callback.py"
+          )
+          urllib.request.urlretrieve(url, base / "self_play_league_based_callback.py")
+          result = subprocess.run(
+              [sys.executable, "-m", "pytest", "-q", "-vv",
+               str(base / "test_self_play_league_based_callback.py"),
+               "-k", "test_new_self_play_module_weights_are_synced_before_mapping",
+               "--tb=short"],
+              text=True, capture_output=True,
+          )
+          print(result.stdout)
+          print(result.stderr)
+          assert result.returncode == 1, "Old official callback unexpectedly passed"
+          assert "AssertionError" in result.stdout, "Expected source-weight assertion failure"
+          assert "1 failed" in result.stdout, "Expected one failing clone-source test"
+          print("EXPECTED RED: official old head copied uninitialized module, not source behavior weights")
+          PY
