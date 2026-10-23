@@ -283,6 +283,71 @@ class FencedNativeLearner:
         finally:
             ray.get(self.authority.release.remote(ticket))
 
+    def benchmark_native_lease_cost(self, snapshot, *, blocks=4, steps=16):
+        """Paired native PyTorch Learner.update calls. No safety claim from timing.
+
+        Modes: raw no-lease, lease RPC per update, and one lease per eight
+        updates. Same authoritative model and same batch per arm, rotated
+        arm order across blocks. Return raw medians; never assert a speedup.
+        """
+        import statistics
+        reader=get_cartpole_dataset_reader(batch_size=32)
+        batch=self.learner._convert_batch_type(reader.next().as_multi_agent())
+        assert batch.count>0
+        modes=("raw","rpc_each","batch8")
+        records={m:[] for m in modes}
+        changes={m:[] for m in modes}
+        for block in range(blocks):
+            # Latin cycle avoids always advantaging the same arm by warm cache.
+            order=modes[block%3:]+modes[:block%3]
+            for mode in order:
+                self._fresh(copy.deepcopy(snapshot),1)
+                self.resume_recovered(1)
+                assert ray.get(self.authority.can_train.remote(1))
+                initial=self.learner.get_state()[COMPONENT_RL_MODULE][DEFAULT_MODULE_ID]
+                initial={k:np.asarray(v).copy() for k,v in initial.items()
+                         if np.issubdtype(np.asarray(v).dtype,np.floating)}
+                t0=time.perf_counter()
+                ticket=None
+                try:
+                    if mode=="batch8":
+                        ticket=ray.get(self.authority.acquire.remote(1))
+                        assert ticket is not None
+                    for i in range(steps):
+                        if mode=="rpc_each":
+                            ticket=ray.get(self.authority.acquire.remote(1))
+                            assert ticket is not None
+                        try:
+                            self.learner.update(batch=batch)
+                        finally:
+                            if mode=="rpc_each":
+                                ray.get(self.authority.release.remote(ticket))
+                                ticket=None
+                        if mode=="batch8" and (i+1)%8==0 and i+1<steps:
+                            ray.get(self.authority.release.remote(ticket))
+                            ticket=ray.get(self.authority.acquire.remote(1))
+                            assert ticket is not None
+                finally:
+                    if ticket is not None:
+                        ray.get(self.authority.release.remote(ticket))
+                elapsed=(time.perf_counter()-t0)*1000
+                current=self.learner.get_state()[COMPONENT_RL_MODULE][DEFAULT_MODULE_ID]
+                diffs=[float(np.max(np.abs(np.asarray(current[k])-v)))
+                       for k,v in initial.items()]
+                change=max(diffs)
+                assert change>0,(mode,block,change)
+                records[mode].append(elapsed)
+                changes[mode].append(change)
+        assert ray.get(self.authority.snapshot.remote())["inflight"]==0
+        baseline=statistics.median(records["raw"])
+        result={"actor":self.rank,"steps":steps,"blocks":blocks,"batch_rows":batch.count,
+                "median_ms":{k:statistics.median(v) for k,v in records.items()},
+                "raw_ms":records,"param_changes":changes,
+                "rpc_each_over_raw":statistics.median(records["rpc_each"])/baseline,
+                "batch8_over_raw":statistics.median(records["batch8"])/baseline,
+                "batch8_over_rpc_each":statistics.median(records["batch8"])/statistics.median(records["rpc_each"])}
+        return result
+
     def train_probe(self):
         # Every wrapper-mediated train call holds a central ticket while
         # making its policy decision. Real Learner.update() is not yet
