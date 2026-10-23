@@ -44,3 +44,14 @@ jobs:
           cd /tmp
           python rllib_native_wheel_learner_smoke.py /tmp/candidate_learner.py
           python rllib_native_wheel_learner_smoke.py /tmp/baseline_learner.py --baseline
+      - name: Run actual checked-out native TestLearner methods under red/green
+        env:
+          RAY_DISABLE_DOCKER_CPU_WARNING: "1"
+          RAY_DEDUP_LOGS: "0"
+          PYTHONPATH: "/tmp"
+        run: |
+          cp ci/rllib_native_methods_red_green.py /tmp/
+          cp python/ray/rllib/core/learner/tests/test_learner.py /tmp/native_test_learner.py
+          cd /tmp
+          python rllib_native_methods_red_green.py /tmp/native_test_learner.py /tmp/candidate_learner.py
+          python rllib_native_methods_red_green.py /tmp/native_test_learner.py /tmp/baseline_learner.py --baseline
