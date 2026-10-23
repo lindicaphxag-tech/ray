@@ -7,6 +7,7 @@ The loss probe is after one successful distributed update and restore.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import secrets
 import time
@@ -17,6 +18,42 @@ import ray
 from ray.rllib.core import COMPONENT_LEARNER, COMPONENT_RL_MODULE, COMPONENT_OPTIMIZER, DEFAULT_MODULE_ID
 from ray.rllib.core.testing.testing_learner import BaseTestingAlgorithmConfig
 from ray.rllib.utils.test_utils import get_cartpole_dataset_reader
+
+
+def install_batch_provenance(learner):
+    """Record the *actual per-Learner objective batch*, not only input batch."""
+    original=learner.compute_loss_for_module
+    learner._audit_batch_digest=[]
+    def traced(*,module_id,config,batch,fwd_out):
+        h=hashlib.sha256()
+        names=[]
+        for key in sorted(batch):
+            value=batch[key]
+            if hasattr(value,"detach"):
+                value=value.detach().cpu().numpy()
+            arr=np.asarray(value)
+            if arr.dtype.kind not in "biufc":
+                continue
+            h.update(str(key).encode())
+            h.update(str(arr.shape).encode())
+            h.update(str(arr.dtype).encode())
+            h.update(arr.tobytes())
+            names.append(str(key))
+        learner._audit_batch_digest.append(
+            {"module":str(module_id),"sha256":h.hexdigest(),
+             "field_count":len(names)})
+        return original(module_id=module_id,config=config,batch=batch,fwd_out=fwd_out)
+    learner.compute_loss_for_module=traced
+    return True
+
+
+def get_batch_provenance(learner):
+    return list(getattr(learner,"_audit_batch_digest",[]))
+
+
+def traced_batches(group):
+    result=group.foreach_learner(get_batch_provenance)
+    return [r.get() for r in result]
 
 
 def delayed_gradient(learner):
@@ -218,10 +255,15 @@ def main():
                           "leader_to_checkpoint_max_error":optimizer_max_abs_difference(
                               warm_optimizer,warm_peer_opt[0])}),flush=True)
         # Counterfactual: uninterrupted continuation from the warm checkpoint.
+        trace_ready=group.foreach_learner(install_batch_provenance)
+        assert len(trace_ready)==2 and all(r.ok and r.get() for r in trace_ready)
         healthy_continuation=group.update(batch=batch,async_update=False)
         assert len(healthy_continuation)==2
         reference_next_models=all_model_states(group)
         reference_next_optimizer=optimizer_numeric_leaves(group.get_state())
+        reference_batch_trace=traced_batches(group)
+        print("HEALTHY_STEP_ACTUAL_BATCH_SHA256",
+              json.dumps(reference_batch_trace,sort_keys=True),flush=True)
         reference_peer_optimizer=all_optimizer_states(group)
         print("HEALTHY_WARM_CONTINUATION",
               json.dumps({"model_peer_error":maximum_error(*reference_next_models),
@@ -334,7 +376,15 @@ def main():
                           "rebuild_over_steady_restore":
                           rebuild_and_restore_ms/ordinary_restore_ms}),flush=True)
         # Require a genuine PyTorch DDP gradient to succeed *after* rebuild.
+        trace_ready=replacement.foreach_learner(install_batch_provenance)
+        assert len(trace_ready)==2 and all(r.ok and r.get() for r in trace_ready)
         return_values=replacement.update(batch=batch,async_update=False)
+        recovered_batch_trace=traced_batches(replacement)
+        print("RECOVERED_STEP_ACTUAL_BATCH_SHA256",
+              json.dumps(recovered_batch_trace,sort_keys=True),flush=True)
+        print("ACTUAL_BATCH_PROVENANCE_MATCHES",
+              json.dumps({"same_per_rank":reference_batch_trace==recovered_batch_trace}),
+              flush=True)
         assert len(return_values)==2,return_values
         trained=all_model_states(replacement)
         training_delta=maximum_error(replaced_models[0],trained[0])
