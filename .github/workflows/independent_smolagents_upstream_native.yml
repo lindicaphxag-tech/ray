@@ -1,0 +1,64 @@
+name: Independent smolagents 2991 and 3000 native upstream acceptance
+on:
+  pull_request:
+    branches:
+      - fix/rllib-envrunner-monotonic-seq-current-20261023
+  push:
+    branches:
+      - ci/smolagents-2991-3000-external-review-gates-20261024
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cpython-semantics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact public official smolagents PR 3000
+        uses: actions/checkout@v4
+        with:
+          repository: huggingface/smolagents
+          ref: refs/pull/3000/head
+          path: upstream
+      - name: Checkout independent witness script from author's validation branch
+        uses: actions/checkout@v4
+        with:
+          repository: lindicaphxag-tech/smolagents
+          ref: ci/pr3000-native-semantic-gate-20261024
+          path: witness
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install native package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./upstream pytest numpy pandas ruff
+      - name: Exact official PR source against native CPython rich comparisons
+        run: |
+          python -m py_compile witness/ci/smolagents_chained_compare_cpython_parity.py
+          ruff check upstream/src/smolagents/local_python_executor.py upstream/tests/test_local_python_executor.py
+          python -u witness/ci/smolagents_chained_compare_cpython_parity.py
+          python -m pytest -q upstream/tests/test_local_python_executor.py -k 'chained_comparison or single_comparison'
+  typed-audio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact public official smolagents PR 2991
+        uses: actions/checkout@v4
+        with:
+          repository: huggingface/smolagents
+          ref: refs/pull/2991/head
+          path: upstream
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install native torch CPU, audio and smolagents test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e ./upstream pytest numpy soundfile ruff
+      - name: Native audio roundtrip, custom final-answer tool and source style
+        run: |
+          ruff check upstream/src/smolagents/agent_types.py upstream/src/smolagents/agents.py upstream/tests/test_agents.py upstream/tests/test_audio_final_answer_roundtrip.py
+          python -m pytest -q upstream/tests/test_audio_final_answer_roundtrip.py
+          python -m pytest -q upstream/tests/test_agents.py -k 'custom_final_answer_tool_receives_sanitized_agent_image'
