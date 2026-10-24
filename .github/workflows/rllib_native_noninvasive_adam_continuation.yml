@@ -1,0 +1,45 @@
+name: RLlib native noninvasive Adam checkpoint-continuation
+on:
+  push:
+    branches:
+      - research/rllib-state-commit-failstop-20261024
+  pull_request:
+    branches:
+      - review/rllib-three-component-causal-state-20261023
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-nohooks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RAY_AUTH_MODE: disabled
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Ray 2.59 native runtime and CPU PyTorch
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install "ray[rllib]==2.59.0"
+      - name: Copy native reference CartPole fixture
+        run: |
+          python - <<'PY'
+          import pathlib,shutil,ray
+          src=pathlib.Path("python/ray/rllib/offline/tests/data/cartpole/large.json")
+          dst=pathlib.Path(ray.__file__).resolve().parent / "rllib/offline/tests/data/cartpole/large.json"
+          assert src.is_file()
+          dst.parent.mkdir(parents=True,exist_ok=True)
+          shutil.copyfile(src,dst)
+          PY
+      - name: Four-seed paired checkpoint continuation without optimizer hooks
+        run: |
+          python -m py_compile ci/rllib_native_noninvasive_adam_continuation.py
+          cp ci/rllib_native_noninvasive_adam_continuation.py /tmp/
+          cd /tmp
+          timeout 540s python -u rllib_native_noninvasive_adam_continuation.py
