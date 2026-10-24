@@ -5,7 +5,7 @@ on:
       - research/rllib-state-commit-failstop-20261024
   pull_request:
     branches:
-      - review/rllib-three-component-causal-state-20261023
+      - research/rllib-state-commit-failstop-20261024
   workflow_dispatch:
 permissions:
   contents: read
