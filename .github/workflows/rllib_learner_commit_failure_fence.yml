@@ -1,0 +1,26 @@
+name: RLlib Learner native-source partial-commit fault injection
+on:
+  push:
+    branches:
+      - research/rllib-state-commit-failstop-20261024
+  pull_request:
+    branches:
+      - review/rllib-three-component-causal-state-20261023
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  actual-method-failure-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile official Learner source and failure harness
+        run: |
+          python -m py_compile python/ray/rllib/core/learner/learner.py
+          python -m py_compile ci/rllib_learner_commit_failure_fence.py
+      - name: Fault injection and fail-closed demonstration
+        run: python ci/rllib_learner_commit_failure_fence.py
