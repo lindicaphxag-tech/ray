@@ -1,0 +1,28 @@
+name: CPU optimizer checkpoint ownership (four families)
+on:
+  push:
+    branches:
+      - research/rllib-state-commit-failstop-20261024
+    paths:
+      - ci/torch_cpu_optimizer_storage_ownership_four_family.py
+      - .github/workflows/torch_cpu_optimizer_ownership_four_family.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-torch-ownership:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install CPU PyTorch and NumPy
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch numpy --index-url https://download.pytorch.org/whl/cpu
+      - name: Four optimizer families red/green ownership counterfactual
+        run: python ci/torch_cpu_optimizer_storage_ownership_four_family.py
