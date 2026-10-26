@@ -97,18 +97,12 @@ def main():
         [7, 8, 9, 0, None, 8, 11, 10],
         [9, 7, 9, 8, 11, 11, None],
     ]
-    sequences.extend(
-        rng.choice([None, 0, 1, 5, 7, 8, 9, 10, 11, 12])
-        for _ in range(1)
-    )
     # 80 independent reorderings, each including older/equal/newer/force.
     for _ in range(80):
         sequences.append([
             rng.choice([None, 0, 1, 5, 7, 8, 9, 10, 11, 12])
             for _ in range(24)
         ])
-    # Remove the single loose element from the deterministic seed extension.
-    sequences = [s for s in sequences if isinstance(s, list)]
     for kind in ("single", "multi"):
         fixed = extract(kind)
         historical = extract(kind, historical=True)
