@@ -622,8 +622,9 @@ class SingleAgentEnvRunner(EnvRunner, Checkpointable):
                     rl_module_state = rl_module_state[DEFAULT_MODULE_ID]
                 self.module.set_state(rl_module_state)
 
-            # Update our weights_seq_no, if the new one is > 0.
-            if weights_seq_no > 0:
+            # Only publish a version that was accepted as newer.
+            # A rejected stale module payload cannot downgrade the version.
+            if weights_seq_no > self._weights_seq_no:
                 self._weights_seq_no = weights_seq_no
 
         # Update lifetime counters.
