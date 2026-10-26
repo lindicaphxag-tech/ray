@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import gymnasium as gym
 from gymnasium.envs.classic_control.cartpole import CartPoleVectorEnv
@@ -8,14 +8,55 @@ from gymnasium.envs.mujoco.swimmer_v4 import SwimmerEnv
 import ray
 from ray import tune
 from ray.rllib.algorithms.algorithm_config import AlgorithmConfig
+from ray.rllib.core import COMPONENT_RL_MODULE, DEFAULT_MODULE_ID
 from ray.rllib.env.env_runner import StepFailedRecreateEnvError
 from ray.rllib.env.single_agent_env_runner import SingleAgentEnvRunner
 from ray.rllib.examples.envs.classes.simple_corridor import SimpleCorridor
 from ray.rllib.examples.envs.classes.ten_step_error_env import TenStepErrorEnv
+from ray.rllib.utils.metrics import WEIGHTS_SEQ_NO
 from ray.tune.registry import ENV_CREATOR, _global_registry
 
 
 class TestSingleAgentEnvRunner(unittest.TestCase):
+    def test_set_state_monotonic_accepted_weight_version(self):
+        # Execute the production SingleAgentEnvRunner.set_state implementation.
+        # A stale module payload must not regress the reported version.
+        runner = MagicMock()
+        runner._weights_seq_no = 8
+        old_module = {DEFAULT_MODULE_ID: {"weight": -7}}
+        SingleAgentEnvRunner.set_state(
+            runner, {COMPONENT_RL_MODULE: old_module, WEIGHTS_SEQ_NO: 7}
+        )
+        runner.module.set_state.assert_not_called()
+        self.assertEqual(runner._weights_seq_no, 8)
+
+        # An equal-version state must also leave the accepted parameters alone.
+        SingleAgentEnvRunner.set_state(
+            runner, {COMPONENT_RL_MODULE: old_module, WEIGHTS_SEQ_NO: 8}
+        )
+        runner.module.set_state.assert_not_called()
+        self.assertEqual(runner._weights_seq_no, 8)
+
+        # Newer weights and version must advance together, with correct
+        # DEFAULT_MODULE_ID unwrapping in the single-agent path.
+        new_module = {"weight": 9}
+        SingleAgentEnvRunner.set_state(
+            runner,
+            {COMPONENT_RL_MODULE: {DEFAULT_MODULE_ID: new_module},
+             WEIGHTS_SEQ_NO: 9},
+        )
+        runner.module.set_state.assert_called_once_with(new_module)
+        self.assertEqual(runner._weights_seq_no, 9)
+
+        # Unversioned state has the documented force-install semantics.
+        runner.module.set_state.reset_mock()
+        forced = {"weight": 100}
+        SingleAgentEnvRunner.set_state(
+            runner, {COMPONENT_RL_MODULE: {DEFAULT_MODULE_ID: forced}}
+        )
+        runner.module.set_state.assert_called_once_with(forced)
+        self.assertEqual(runner._weights_seq_no, 9)
+
     @classmethod
     def setUpClass(cls) -> None:
         ray.init()
