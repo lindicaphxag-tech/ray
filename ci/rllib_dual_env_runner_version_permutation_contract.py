@@ -86,7 +86,7 @@ def trace(fn, kind, sequence):
         if version is not None and version > accepted:
             accepted = version
         assert instance._weights_seq_no == accepted, (
-            kind, pos, "published weights diverge from accepted sequence",
+            kind, pos, "positive version label regressed",
             version, accepted, instance._weights_seq_no,
         )
     return len(sequence)
@@ -97,12 +97,16 @@ def main():
         [7, 8, 9, 0, None, 8, 11, 10],
         [9, 7, 9, 8, 11, 11, None],
     ]
-    # 80 independent reorderings, each including older/equal/newer/force.
+    # Guarantee coverage within *each* permutation; a random draw alone
+    # can accidentally omit a required case.
+    mandatory = [None, 0, 7, 8, 9, 11, 12]
     for _ in range(80):
-        sequences.append([
+        seq = mandatory + [
             rng.choice([None, 0, 1, 5, 7, 8, 9, 10, 11, 12])
-            for _ in range(24)
-        ])
+            for _ in range(24 - len(mandatory))
+        ]
+        rng.shuffle(seq)
+        sequences.append(seq)
     for kind in ("single", "multi"):
         fixed = extract(kind)
         historical = extract(kind, historical=True)
@@ -116,6 +120,23 @@ def main():
         print("GREEN", kind, len(sequences), "sequences,", transitions,
               "state transitions")
     print("Scope: source-extracted methods; no native Ray actor/optimizer pass")
+    # A positive counter alone does not certify identity after an unversioned
+    # forced install. This intentionally documents, rather than 'fixes',
+    # a distinct existing compatibility contract.
+    for kind in ("single", "multi"):
+        fn = extract(kind)
+        resident = MagicMock()
+        resident._weights_seq_no = 8
+        payload_a = {"default": {"weight": 8}}
+        payload_b = {"default": {"weight": 123}}
+        fn(resident, {"module": payload_a})
+        before = resident.module.set_state.call_args.args[0]
+        fn(resident, {"module": payload_b})
+        after = resident.module.set_state.call_args.args[0]
+        assert before != after
+        assert resident._weights_seq_no == 8
+        print("EXPECTED LIMITATION", kind,
+              "unversioned force changes weights without updating label")
 
 if __name__ == "__main__":
     main()
