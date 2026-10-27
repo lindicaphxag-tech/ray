@@ -57,6 +57,36 @@ class TestSingleAgentEnvRunner(unittest.TestCase):
         runner.module.set_state.assert_called_once_with(forced)
         self.assertEqual(runner._weights_seq_no, 9)
 
+    def test_exported_weight_version_tracks_only_accepted_positive_state(self):
+        # A rejected stale positive sequence must not contaminate get_state's
+        # externally visible version; an unversioned force install retains
+        # historical compatibility without creating a new positive label.
+        runner = MagicMock()
+        runner._weights_seq_no = 8
+        self.assertEqual(
+            SingleAgentEnvRunner.get_state(runner)[WEIGHTS_SEQ_NO], 8
+        )
+        SingleAgentEnvRunner.set_state(
+            runner, {COMPONENT_RL_MODULE: {"default": {"weight": -7}},
+                     WEIGHTS_SEQ_NO: 7}
+        )
+        self.assertEqual(
+            SingleAgentEnvRunner.get_state(runner)[WEIGHTS_SEQ_NO], 8
+        )
+        SingleAgentEnvRunner.set_state(
+            runner, {COMPONENT_RL_MODULE: {"default": {"weight": 9}},
+                     WEIGHTS_SEQ_NO: 9}
+        )
+        self.assertEqual(
+            SingleAgentEnvRunner.get_state(runner)[WEIGHTS_SEQ_NO], 9
+        )
+        SingleAgentEnvRunner.set_state(
+            runner, {COMPONENT_RL_MODULE: {"default": {"weight": 100}}}
+        )
+        self.assertEqual(
+            SingleAgentEnvRunner.get_state(runner)[WEIGHTS_SEQ_NO], 9
+        )
+
     @classmethod
     def setUpClass(cls) -> None:
         ray.init()
