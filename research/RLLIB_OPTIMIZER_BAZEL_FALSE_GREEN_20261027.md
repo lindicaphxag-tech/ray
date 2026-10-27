@@ -48,3 +48,18 @@ First, both receivers' `exp_avg.data_ptr()` and the sender's NumPy address are i
 After resetting the sender's **full** checkpoint (including the scalar `step` array, which itself was mutated) and restoring each receiver with `torch.from_numpy(value).clone()`, buffers are pairwise disjoint and disjoint from the sender; both receivers' parameters and each named Adam state buffer match the reference **exactly** after the next step. This adds the explicit `step` ownership gate that otherwise can be overlooked if tests only inspect moment tensors.
 
 The standalone witness was executed locally; the equivalent fork copy is now a prerequisite in the [staged native Ray 2.59 stock-red/patched-green workflow](../.github/workflows/rllib_optimizer_bazel_entry_native_20261027.yml), but **no new workflow run is yet confirmed**. The official Ray #67351 PR remains unchanged; three missing DCO sign-offs and the failed Microcheck remain separate blockers. This research is not a new upstream accepted feature.
+
+## 2026-10-27 executable test-collection witness (local CPU run)
+
+A new [runtime collection audit](../ci/verify_bazel_pytest_collection_runtime.py) uses the **real test-file Python AST**, replaces the ownership test body with an unconditional sentinel AssertionError, and executes small Python programs directly, as the Bazel py_test launcher would:
+
+- Historical file, with a test function but **without a __main__ entrypoint**: exit 0, sentinel never executed — false green.
+- Fixed file, with pytest.main and sys.exit: exit 1, sentinel reached — real red.
+
+A local copy of this audit was executed under Python/pytest with a representative test module with exactly the same main-entry pattern:
+
+    historical exit 0 sentinel False
+    fixed exit 1 sentinel True
+    PASS: exact main AST dispatches pytest and propagates failure; Bazel false-green prevented
+
+The checked-in verifier reads the actual fork test file at execution time. The staged native Ray workflow now requires it as a preflight. **No new GitHub Actions/Bazel run has been confirmed**, so full RLlib integration is not claimed.
