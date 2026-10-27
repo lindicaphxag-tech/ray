@@ -40,6 +40,9 @@ jobs:
       - name: Pure PyTorch two-receiver checkpoint ownership preflight
         run: |
           python ci/rllib_numpy_adam_two_receiver_storage_witness.py
+      - name: Require CPU optimizer ownership across Adam AdamW and momentum SGD
+        run: |
+          python ci/rllib_optimizer_cross_algorithm_alias_audit_20261027.py
       - name: Install unchanged CartPole dataset required by test
         run: |
           python - <<'PY'
