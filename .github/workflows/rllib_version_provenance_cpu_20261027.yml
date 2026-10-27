@@ -1,0 +1,30 @@
+name: RLlib single/multi EnvRunner version invariant CPU source gate
+on:
+  push:
+    branches:
+      - research/rllib-single-agent-weight-seq-invariant-20261027
+    paths:
+      - "ci/rllib_*weight*"
+      - "ci/rllib_dual_env_runner_version_permutation_contract.py"
+      - "python/ray/rllib/env/single_agent_env_runner.py"
+      - "python/ray/rllib/env/multi_agent_env_runner.py"
+      - ".github/workflows/rllib_version_provenance_cpu_20261027.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile production sources and deterministic proof harness
+        run: |
+          python -m py_compile python/ray/rllib/env/single_agent_env_runner.py python/ray/rllib/env/multi_agent_env_runner.py ci/rllib_single_agent_weight_version_contract.py ci/rllib_dual_env_runner_version_permutation_contract.py
+      - name: Run exact checkout SingleAgent negative control and patch
+        run: python ci/rllib_single_agent_weight_version_contract.py
+      - name: Execute Single and MultiAgent 3870 state transitions
+        run: python ci/rllib_dual_env_runner_version_permutation_contract.py
