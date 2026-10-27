@@ -36,6 +36,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           python -m pip install "ray[rllib]==2.59.0" pytest
+      - name: Pure PyTorch two-receiver checkpoint ownership preflight
+        run: |
+          python ci/rllib_numpy_adam_two_receiver_storage_witness.py
       - name: Install unchanged CartPole dataset required by test
         run: |
           python - <<'PY'
