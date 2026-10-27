@@ -132,6 +132,36 @@ class TestMultiAgentEnvRunner(unittest.TestCase):
         runner.module.set_state.assert_called_once_with(forced_state)
         self.assertEqual(runner._weights_seq_no, 9)
 
+    def test_exported_weight_version_tracks_only_accepted_positive_state(self):
+        # A rejected stale positive sequence must not contaminate get_state's
+        # externally visible version; an unversioned force install retains
+        # historical compatibility without creating a new positive label.
+        runner = MagicMock()
+        runner._weights_seq_no = 8
+        self.assertEqual(
+            MultiAgentEnvRunner.get_state(runner)[WEIGHTS_SEQ_NO], 8
+        )
+        MultiAgentEnvRunner.set_state(
+            runner, {COMPONENT_RL_MODULE: {"default": {"weight": -7}},
+                     WEIGHTS_SEQ_NO: 7}
+        )
+        self.assertEqual(
+            MultiAgentEnvRunner.get_state(runner)[WEIGHTS_SEQ_NO], 8
+        )
+        MultiAgentEnvRunner.set_state(
+            runner, {COMPONENT_RL_MODULE: {"default": {"weight": 9}},
+                     WEIGHTS_SEQ_NO: 9}
+        )
+        self.assertEqual(
+            MultiAgentEnvRunner.get_state(runner)[WEIGHTS_SEQ_NO], 9
+        )
+        MultiAgentEnvRunner.set_state(
+            runner, {COMPONENT_RL_MODULE: {"default": {"weight": 100}}}
+        )
+        self.assertEqual(
+            MultiAgentEnvRunner.get_state(runner)[WEIGHTS_SEQ_NO], 9
+        )
+
     def test_sample_timesteps(self):
         # Build a multi agent config.
         config = self._build_config()
