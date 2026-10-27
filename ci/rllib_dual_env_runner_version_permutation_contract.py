@@ -27,26 +27,29 @@ CLASSES = {
     "multi": "MultiAgentEnvRunner",
 }
 
-def extract(kind, *, historical=False):
+def extract(kind, *, historical=False, method="set_state"):
     path = SOURCES[kind]
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     klass = next(x for x in tree.body if isinstance(x, ast.ClassDef)
                  and x.name == CLASSES[kind])
     fn = copy.deepcopy(next(x for x in klass.body
                             if isinstance(x, ast.FunctionDef)
-                            and x.name == "set_state"))
+                            and x.name == method))
     fn.decorator_list = []
     fn.returns = None
     for arg in fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs:
         arg.annotation = None
-    guards = [
-        x for x in ast.walk(fn)
-        if isinstance(x, ast.If)
-        and ast.unparse(x.test) == "weights_seq_no > self._weights_seq_no"
-    ]
-    assert len(guards) == 1, (kind, len(guards))
-    if historical:
-        guards[0].test = ast.parse("weights_seq_no > 0", mode="eval").body
+    if method == "set_state":
+        guards = [
+            x for x in ast.walk(fn)
+            if isinstance(x, ast.If)
+            and ast.unparse(x.test) == "weights_seq_no > self._weights_seq_no"
+        ]
+        assert len(guards) == 1, (kind, len(guards))
+        if historical:
+            guards[0].test = ast.parse("weights_seq_no > 0", mode="eval").body
+    else:
+        assert method == "get_state" and not historical
     namespace = {
         "COMPONENT_ENV_TO_MODULE_CONNECTOR": "input_connector",
         "COMPONENT_MODULE_TO_ENV_CONNECTOR": "output_connector",
@@ -63,7 +66,7 @@ def extract(kind, *, historical=False):
     exec(compile(code, filename=str(path), mode="exec"), namespace)
     return namespace["set_state"]
 
-def trace(fn, kind, sequence):
+def trace(fn, export, kind, sequence):
     instance = MagicMock()
     instance._weights_seq_no = 8
     accepted = 8
@@ -89,6 +92,10 @@ def trace(fn, kind, sequence):
             kind, pos, "positive version label regressed",
             version, accepted, instance._weights_seq_no,
         )
+        assert export(instance)["version"] == accepted, (
+            kind, pos, "exported version diverges from accepted sequence",
+            version, accepted, export(instance)["version"],
+        )
     return len(sequence)
 
 def main():
@@ -110,13 +117,14 @@ def main():
     for kind in ("single", "multi"):
         fixed = extract(kind)
         historical = extract(kind, historical=True)
+        export = extract(kind, method="get_state")
         try:
-            trace(historical, kind, [7, 8])
+            trace(historical, export, kind, [7, 8])
         except AssertionError:
             print("EXPECTED RED", kind, "rejected stale version downgrades")
         else:
             raise AssertionError("Old-version bug not reproduced: " + kind)
-        transitions = sum(trace(fixed, kind, seq) for seq in sequences)
+        transitions = sum(trace(fixed, export, kind, seq) for seq in sequences)
         print("GREEN", kind, len(sequences), "sequences,", transitions,
               "state transitions")
     print("Scope: source-extracted methods; no native Ray actor/optimizer pass")
