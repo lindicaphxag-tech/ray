@@ -30,6 +30,7 @@ jobs:
       - name: Verify actual Bazel entry dispatch and historical negative
         run: |
           python ci/check_optimizer_ownership_bazel_entry.py
+          python ci/verify_bazel_pytest_collection_runtime.py
           python -m py_compile python/ray/rllib/core/learner/tests/test_torch_optimizer_restore_ownership.py
       - name: Install native Ray 2.59 and CPU torch
         run: |
