@@ -1,0 +1,80 @@
+name: RLlib optimizer ownership Bazel-entry native red-green
+on:
+  push:
+    branches:
+      - research/rllib-optimizer-bazel-test-entry-20261027
+    paths:
+      - "python/ray/rllib/core/learner/tests/test_torch_optimizer_restore_ownership.py"
+      - "python/ray/rllib/BUILD.bazel"
+      - "python/ray/rllib/core/learner/torch/torch_learner.py"
+      - "ci/check_optimizer_ownership_bazel_entry.py"
+      - "ci/rllib_exact_optimizer_patch_loader.py"
+      - ".github/workflows/rllib_optimizer_bazel_entry_native_20261027.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-entry-and-native-red-green:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RAY_AUTH_MODE: disabled
+      OMP_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify actual Bazel entry dispatch and historical negative
+        run: |
+          python ci/check_optimizer_ownership_bazel_entry.py
+          python -m py_compile python/ray/rllib/core/learner/tests/test_torch_optimizer_restore_ownership.py
+      - name: Install native Ray 2.59 and CPU torch
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install "ray[rllib]==2.59.0" pytest
+      - name: Install unchanged CartPole dataset required by test
+        run: |
+          python - <<'PY'
+          import pathlib, shutil, ray
+          src=pathlib.Path("python/ray/rllib/offline/tests/data/cartpole/large.json")
+          dest=pathlib.Path(ray.__file__).resolve().parent/"rllib/offline/tests/data/cartpole/large.json"
+          assert src.is_file() and src.stat().st_size>1000
+          dest.parent.mkdir(parents=True, exist_ok=True)
+          shutil.copyfile(src, dest)
+          PY
+      - name: Native STOCK wheel directly executes test and must fail for alias
+        run: |
+          cp python/ray/rllib/core/learner/tests/test_torch_optimizer_restore_ownership.py /tmp/test_ray_optimizer_owned_checkpoint.py
+          cd /tmp
+          set +e
+          python test_ray_optimizer_owned_checkpoint.py 2>&1 | tee /tmp/stock_ray_bazel_entry_red.log
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "STOCK_PYTHON_ENTRY_EXIT=$result"
+          if [ "$result" -ne 1 ]; then
+            echo "Expected pytest failure (1): Bazel file entry may still be false green"
+            exit 1
+          fi
+          if ! grep -E 'optimizer buffer aliases input checkpoint|in-place Adam step mutated checkpoint' /tmp/stock_ray_bazel_entry_red.log; then
+            echo "Stock failure was not the expected checkpoint alias witness"
+            exit 1
+          fi
+          echo "EXACT_BAZEL_ENTRY_STOCK_RED_CONFIRMED"
+      - name: Configure source-exact patch loader with no wheel API transplant
+        run: |
+          cp python/ray/rllib/core/learner/torch/torch_learner.py /tmp/patched_torch_learner.py
+          cp ci/rllib_exact_optimizer_patch_loader.py /tmp/
+          cat > /tmp/conftest.py <<'PY'
+          from rllib_exact_optimizer_patch_loader import patch_class
+          assert patch_class()
+          print("SOURCE_EXACT_CPU_OPTIMIZER_PATCH_INSTALLED")
+          PY
+      - name: Native patched wheel directly executes same test and must pass
+        run: |
+          cd /tmp
+          python test_ray_optimizer_owned_checkpoint.py
+          echo "EXACT_BAZEL_ENTRY_PATCHED_GREEN_CONFIRMED"
