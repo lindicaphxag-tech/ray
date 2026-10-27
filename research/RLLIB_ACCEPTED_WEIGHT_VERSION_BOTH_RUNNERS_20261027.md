@@ -38,3 +38,10 @@ This is not a new numerical algorithm or proof of distributed linearizability; i
 [Ray #67329](https://github.com/ray-project/ray/pull/67329) already has two correctly signed-off author commits and a source-level plus native-wheel regression for the multi-agent case. **Do not silently add unsigned commits to that official PR**, because Ray's Developer Certificate of Origin requires the real contributor's sign-off on every commit. Maintainer review should determine whether to expand #67329 to both runner types or create a focused additional PR after native confirmation; do not inflate the official PR's status before that decision.
 
 [Ray #67351](https://github.com/ray-project/ray/pull/67351) has a *separate* CPU optimizer-state aliasing invariant and three previously unsigned commits; the DCO problem there must be fixed by the actual author. Neither this fork branch nor its source-level tests remove #67351's DCO/Buildkite blockers.
+
+
+## 2026-10-27 additional test audit
+
+The cross-runner verifier now guarantees that **each** of the 80 shuffled 24-transition sequences contains a stale positive version, an equal version, a newer version, a zero forced install and a missing-version forced install. The two original explicit sequences remain: 82 sequences / 1,935 transitions for each runner (3,870 total). A local source-equivalent AST fixture constructed from the reviewed production `set_state` method bodies ran the historical RED and fixed GREEN cases successfully; this is **not a native Ray wheel/GitHub Actions run or a byte-for-byte checkout verification**.
+
+It also demonstrates [a distinct provenance impossibility](RLLIB_FORCE_INSTALL_VERSION_IDENTIFIABILITY_20261027.md): an unversioned forced install can change resident module weights without advancing `WEIGHTS_SEQ_NO`, making two different weight snapshots indistinguishable to a version-only observer. This is explicitly **preserved behavior**, not a reason to expand DCO-green official Ray PR #67329. Claims of full parameter/version identity must be limited to positive-version acceptance transitions.
