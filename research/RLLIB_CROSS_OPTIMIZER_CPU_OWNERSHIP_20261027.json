@@ -1,0 +1,113 @@
+{
+  "date": "2026-10-27",
+  "environment": {
+    "pytorch": "2.10.0+cpu",
+    "numpy": "2.3.5",
+    "backend": "CPU",
+    "ray_installed": false
+  },
+  "scope": "Independent real PyTorch Optimizer.load_state_dict experiment; no Ray actor/GPU/native Ray wheel claim",
+  "protocol": "One warmed checkpoint converted to NumPy; two optimizers restored from the same sender; run same gradient and compare to an independently restored uninterrupted reference. Control clones every per-param checkpoint tensor. Inspect pointer aliases, sender mutation and exact reference parity.",
+  "cases": [
+    {
+      "optimizer": "Adam",
+      "dtype": "float32",
+      "aliased": [
+        "step",
+        "exp_avg",
+        "exp_avg_sq"
+      ],
+      "sender_changed": [
+        "step",
+        "exp_avg",
+        "exp_avg_sq"
+      ],
+      "bad_next_step_max_error": 0.0033941268920898438,
+      "corrected_next_step_max_error": 0,
+      "corrected_state_max_error": 0,
+      "source_unchanged": true
+    },
+    {
+      "optimizer": "Adam",
+      "dtype": "float64",
+      "aliased": [
+        "step",
+        "exp_avg",
+        "exp_avg_sq"
+      ],
+      "sender_changed": [
+        "step",
+        "exp_avg",
+        "exp_avg_sq"
+      ],
+      "bad_next_step_max_error": 0.00339414309570496,
+      "corrected_next_step_max_error": 0,
+      "corrected_state_max_error": 0,
+      "source_unchanged": true
+    },
+    {
+      "optimizer": "AdamW",
+      "dtype": "float32",
+      "aliased": [
+        "step",
+        "exp_avg",
+        "exp_avg_sq"
+      ],
+      "sender_changed": [
+        "step",
+        "exp_avg",
+        "exp_avg_sq"
+      ],
+      "bad_next_step_max_error": 0.0033941268920898438,
+      "corrected_next_step_max_error": 0,
+      "corrected_state_max_error": 0,
+      "source_unchanged": true
+    },
+    {
+      "optimizer": "AdamW",
+      "dtype": "float64",
+      "aliased": [
+        "step",
+        "exp_avg",
+        "exp_avg_sq"
+      ],
+      "sender_changed": [
+        "step",
+        "exp_avg",
+        "exp_avg_sq"
+      ],
+      "bad_next_step_max_error": 0.00339414309570496,
+      "corrected_next_step_max_error": 0,
+      "corrected_state_max_error": 0,
+      "source_unchanged": true
+    },
+    {
+      "optimizer": "SGD_momentum",
+      "dtype": "float32",
+      "aliased": [
+        "momentum_buffer"
+      ],
+      "sender_changed": [
+        "momentum_buffer"
+      ],
+      "bad_next_step_max_error": 0.007380008697509766,
+      "corrected_next_step_max_error": 0,
+      "corrected_state_max_error": 0,
+      "source_unchanged": true
+    },
+    {
+      "optimizer": "SGD_momentum",
+      "dtype": "float64",
+      "aliased": [
+        "momentum_buffer"
+      ],
+      "sender_changed": [
+        "momentum_buffer"
+      ],
+      "bad_next_step_max_error": 0.007380000000000053,
+      "corrected_next_step_max_error": 0,
+      "corrected_state_max_error": 0,
+      "source_unchanged": true
+    }
+  ]
+}
