@@ -29,3 +29,22 @@ The remaining problem is that the official test module has only a top-level pyte
 Official Ray #67351 still has **three author commits failing DCO sign-off**. The additional test-entrypoint change is staged on this **separate research branch** so it does not create yet another unsigned official commit. DCO sign-off is an author attestation and must be performed by the real contributor, including these existing commits, before the combined fix is an eligible merge candidate. After a valid author sign-off, bring in this entrypoint as a separately signed commit and rerun the native check. The Buildkite Microcheck failure remains independently unresolved without its accessible detailed logs.
 
 **Attribution:** authored on fork branch `research/rllib-optimizer-bazel-test-entry-20261027`; no adoption or upstream approval claimed.
+
+
+## 2026-10-27 additional native PyTorch CPU two-receiver counterexample
+
+To isolate the **underlying PyTorch storage behavior** from Ray installation and actor scheduling, a new [standalone Adam ownership witness](../ci/rllib_numpy_adam_two_receiver_storage_witness.py) was added to this fork. It uses **real `torch.optim.Adam` and `Optimizer.load_state_dict`**, not a mock optimizer, and two independently created optimizer/parameter pairs restored from **the same** NumPy-backed sender checkpoint.
+
+On the current local **PyTorch 2.10.0+cpu / NumPy 2.3.5** runtime:
+
+```
+OLD CHECKPOINT BUFFER MUTATIONS: ['step', 'exp_avg', 'exp_avg_sq']
+EXPECTED RED: shared Adam sender buffer; second-receiver parameter error=0.00339412689; exp_avg error=0.0468000025
+GREEN: two independent Adam restores preserve sender and match reference next-step parameters and optimizer buffers exactly
+```
+
+First, both receivers' `exp_avg.data_ptr()` and the sender's NumPy address are identical. After the first receiver's true Adam step, **all three** sender optimizer state arrays—`step`, `exp_avg`, `exp_avg_sq`—have changed; therefore the second receiver's next-step parameter and moment states diverge from an independent uninterrupted Adam reference. This is a deterministic state-ownership counterexample. It is **not evidence of a deployed Ray incident**.
+
+After resetting the sender's **full** checkpoint (including the scalar `step` array, which itself was mutated) and restoring each receiver with `torch.from_numpy(value).clone()`, buffers are pairwise disjoint and disjoint from the sender; both receivers' parameters and each named Adam state buffer match the reference **exactly** after the next step. This adds the explicit `step` ownership gate that otherwise can be overlooked if tests only inspect moment tensors.
+
+The standalone witness was executed locally; the equivalent fork copy is now a prerequisite in the [staged native Ray 2.59 stock-red/patched-green workflow](../.github/workflows/rllib_optimizer_bazel_entry_native_20261027.yml), but **no new workflow run is yet confirmed**. The official Ray #67351 PR remains unchanged; three missing DCO sign-offs and the failed Microcheck remain separate blockers. This research is not a new upstream accepted feature.
