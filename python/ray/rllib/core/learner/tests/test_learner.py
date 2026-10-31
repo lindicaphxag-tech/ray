@@ -166,6 +166,15 @@ class TestLearner(unittest.TestCase):
             set_optimizer.assert_not_called()
         self.assertEqual(learner.get_state()[WEIGHTS_SEQ_NO], 2)
 
+        # A same-version module checkpoint is also rejected by set_state.
+        with patch.object(learner, "_set_optimizer_state") as set_optimizer:
+            learner.set_state({
+                COMPONENT_RL_MODULE: module_state,
+                COMPONENT_OPTIMIZER: optimizer_state,
+                WEIGHTS_SEQ_NO: 2,
+            })
+            set_optimizer.assert_not_called()
+
         # Optimizer-only restoration is intentionally supported.
         with patch.object(learner, "_set_optimizer_state") as set_optimizer:
             learner.set_state({COMPONENT_OPTIMIZER: optimizer_state})
