@@ -1,11 +1,12 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import gymnasium as gym
 import numpy as np
 
 import ray
-from ray.rllib.core import COMPONENT_RL_MODULE, DEFAULT_MODULE_ID
+from ray.rllib.core import COMPONENT_OPTIMIZER, COMPONENT_RL_MODULE, DEFAULT_MODULE_ID
 from ray.rllib.core.learner.learner import LR_KEY, Learner, UpdatePlan
 from ray.rllib.core.testing.testing_learner import BaseTestingAlgorithmConfig
 from ray.rllib.policy.sample_batch import MultiAgentBatch, SampleBatch
@@ -143,6 +144,42 @@ class TestLearner(unittest.TestCase):
                 current_state[module_id][parameter_name],
             )
         )
+
+    def test_stale_module_checkpoint_cannot_overwrite_live_optimizer(self):
+        """A rejected stale weight checkpoint must not replace Adam buffers."""
+        learner = BaseTestingAlgorithmConfig().build_learner(env=self.ENV)
+        first = learner.get_state()
+        module_state = first[COMPONENT_RL_MODULE]
+        optimizer_state = first[COMPONENT_OPTIMIZER]
+
+        # Publish two unversioned writes. The checkpoint's version 1 is stale.
+        learner.set_state({COMPONENT_RL_MODULE: module_state})
+        learner.set_state({COMPONENT_RL_MODULE: module_state})
+        self.assertEqual(learner.get_state()[WEIGHTS_SEQ_NO], 2)
+
+        with patch.object(learner, "_set_optimizer_state") as set_optimizer:
+            learner.set_state({
+                COMPONENT_RL_MODULE: module_state,
+                COMPONENT_OPTIMIZER: optimizer_state,
+                WEIGHTS_SEQ_NO: 1,
+            })
+            set_optimizer.assert_not_called()
+        self.assertEqual(learner.get_state()[WEIGHTS_SEQ_NO], 2)
+
+        # Optimizer-only restoration is intentionally supported.
+        with patch.object(learner, "_set_optimizer_state") as set_optimizer:
+            learner.set_state({COMPONENT_OPTIMIZER: optimizer_state})
+            set_optimizer.assert_called_once_with(optimizer_state)
+
+        # A genuinely newer combined checkpoint restores both components.
+        with patch.object(learner, "_set_optimizer_state") as set_optimizer:
+            learner.set_state({
+                COMPONENT_RL_MODULE: module_state,
+                COMPONENT_OPTIMIZER: optimizer_state,
+                WEIGHTS_SEQ_NO: 3,
+            })
+            set_optimizer.assert_called_once_with(optimizer_state)
+        self.assertEqual(learner.get_state()[WEIGHTS_SEQ_NO], 3)
 
     def test_end_to_end_update(self):
         """Tests the end-to-end update process for a single-agent scenario.

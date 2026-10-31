@@ -1626,6 +1626,15 @@ class Learner(Checkpointable):
 
         weights_seq_no = state.get(WEIGHTS_SEQ_NO, 0)
 
+        # If we reject a stale module checkpoint, its optimizer buffers must
+        # not be loaded into the newer live weights. An optimizer-only state
+        # update remains independent and is not rejected by this guard.
+        stale_module_checkpoint = (
+            COMPONENT_RL_MODULE in state
+            and weights_seq_no > 0
+            and weights_seq_no <= self._weights_seq_no
+        )
+
         if COMPONENT_RL_MODULE in state:
             if weights_seq_no == 0 or self._weights_seq_no < weights_seq_no:
                 self.module.set_state(state[COMPONENT_RL_MODULE])
@@ -1640,7 +1649,7 @@ class Learner(Checkpointable):
                 ):
                     self._weights_seq_no += 1
 
-        if COMPONENT_OPTIMIZER in state:
+        if COMPONENT_OPTIMIZER in state and not stale_module_checkpoint:
             self._set_optimizer_state(state[COMPONENT_OPTIMIZER])
 
         # Keep the sequence monotonic: stale state must not downgrade the version of newer weights.
