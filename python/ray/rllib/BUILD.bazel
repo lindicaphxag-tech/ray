@@ -5089,6 +5089,18 @@ py_test(
     ],
 )
 
+py_test(
+    name = "examples/multi_agent/utils/test_self_play_league_based_callback",
+    size = "small",
+    srcs = ["examples/multi_agent/utils/test_self_play_league_based_callback.py"],
+    main = "examples/multi_agent/utils/test_self_play_league_based_callback.py",
+    tags = [
+        "examples",
+        "team:rllib",
+    ],
+    deps = [":conftest"],
+)
+
 # subdirectory: offline_rl/
 # ....................................
 

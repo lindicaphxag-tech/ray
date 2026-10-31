@@ -156,3 +156,11 @@ def test_new_module_state_bypasses_equal_global_weights_sequence():
     )
     runner.module.set_state.assert_called_once_with(new_module_state)
     assert runner._weights_seq_no == 7
+
+
+if __name__ == "__main__":
+    import sys
+
+    import pytest
+
+    sys.exit(pytest.main(["-v", __file__]))
