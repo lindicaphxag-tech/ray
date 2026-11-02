@@ -1,8 +1,11 @@
 import os
 import time
 import unittest
+from collections import defaultdict
 from pathlib import Path
 from random import choice
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import gymnasium as gym
 import numpy as np
@@ -40,6 +43,91 @@ class TestAlgorithm(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         ray.shutdown()
+
+    def test_restore_env_runner_restores_runtime_multi_agent_selectors(self):
+        """Recovery must copy routing and trainability from the same local source."""
+
+        class ModuleBank(dict):
+            @property
+            def _rl_modules(self):
+                return self
+
+            def add_module(self, module_id, module, override=False):
+                self[module_id] = module
+
+        def run_restore(policy_mapping_fn, policies_to_train):
+            source = MagicMock()
+            source.config = SimpleNamespace(
+                policy_mapping_fn=policy_mapping_fn,
+                policies_to_train=policies_to_train,
+            )
+            source.get_state.return_value = {
+                "rl_module": {"main": {"w": 42}, "league_1": {"w": 17}},
+                "weights_seq_no": 5,
+            }
+
+            events = []
+            restored = MagicMock()
+            restored.module = ModuleBank({"main": object()})
+            restored.config = SimpleNamespace(
+                enable_env_runner_and_connector_v2=True,
+                is_multi_agent=True,
+                multi_agent=MagicMock(
+                    side_effect=lambda **kwargs: events.append(("selectors", kwargs))
+                ),
+            )
+            restored.set_state.side_effect = lambda state: events.append(
+                ("weights", state["rl_module"])
+            )
+
+            group = MagicMock()
+            group.local_env_runner = source
+            group.probe_unhealthy_env_runners.return_value = [2]
+            group.foreach_env_runner.side_effect = (
+                lambda func, **kwargs: [func(restored)]
+            )
+
+            algorithm = MagicMock()
+            algorithm.env_runner = source
+            algorithm.config = SimpleNamespace(
+                is_online=True,
+                enable_env_runner_and_connector_v2=True,
+                is_multi_agent=True,
+                env_runner_restore_timeout_s=None,
+            )
+            algorithm._counters = defaultdict(int)
+
+            module_spec = MagicMock()
+            module_spec.rl_module_specs = {
+                "main": MagicMock(),
+                "league_1": MagicMock(),
+            }
+            with patch(
+                "ray.rllib.algorithms.algorithm.MultiRLModuleSpec.from_module",
+                return_value=module_spec,
+            ):
+                recovered = Algorithm.restore_env_runners(algorithm, group)
+
+            self.assertEqual(recovered, [2])
+            self.assertIn("league_1", restored.module)
+            self.assertEqual([event[0] for event in events], ["weights", "selectors"])
+            self.assertEqual(events[0][1], source.get_state.return_value["rl_module"])
+            self.assertIs(events[1][1]["policy_mapping_fn"], policy_mapping_fn)
+            self.assertIs(events[1][1]["policies_to_train"], policies_to_train)
+            self.assertEqual(algorithm._counters["total_num_restored_workers"], 1)
+
+        def route_to_league(*args, **kwargs):
+            return "league_1"
+
+        should_train = lambda policy_id, batch: policy_id == "main"
+        # None is a valid selector value, not a signal to skip restoration.
+        for mapping_fn, trainable in (
+            (route_to_league, None),
+            (None, {"main", "league_1"}),
+            (None, should_train),
+        ):
+            with self.subTest(mapping_fn=mapping_fn, trainable=trainable):
+                run_restore(mapping_fn, trainable)
 
     def test_add_module_and_remove_module(self):
         config = (
