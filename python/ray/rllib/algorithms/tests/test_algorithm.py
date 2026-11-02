@@ -55,7 +55,7 @@ class TestAlgorithm(unittest.TestCase):
             def add_module(self, module_id, module, override=False):
                 self[module_id] = module
 
-        def run_restore(policy_mapping_fn, policies_to_train):
+        def run_restore(policy_mapping_fn, policies_to_train, local_source=True):
             source = MagicMock()
             source.config = SimpleNamespace(
                 policy_mapping_fn=policy_mapping_fn,
@@ -81,7 +81,7 @@ class TestAlgorithm(unittest.TestCase):
             )
 
             group = MagicMock()
-            group.local_env_runner = source
+            group.local_env_runner = source if local_source else None
             group.probe_unhealthy_env_runners.return_value = [2]
             group.foreach_env_runner.side_effect = (
                 lambda func, **kwargs: [func(restored)]
@@ -110,10 +110,17 @@ class TestAlgorithm(unittest.TestCase):
 
             self.assertEqual(recovered, [2])
             self.assertIn("league_1", restored.module)
-            self.assertEqual([event[0] for event in events], ["weights", "selectors"])
+            self.assertEqual(events[0][0], "weights")
             self.assertEqual(events[0][1], source.get_state.return_value["rl_module"])
-            self.assertIs(events[1][1]["policy_mapping_fn"], policy_mapping_fn)
-            self.assertIs(events[1][1]["policies_to_train"], policies_to_train)
+            if local_source:
+                self.assertEqual([event[0] for event in events], ["weights", "selectors"])
+                self.assertIs(events[1][1]["policy_mapping_fn"], policy_mapping_fn)
+                self.assertIs(events[1][1]["policies_to_train"], policies_to_train)
+            else:
+                # Evaluation recovery may use the training EnvRunner for weights,
+                # but must not inherit its runtime routing/trainability selectors.
+                self.assertEqual([event[0] for event in events], ["weights"])
+                restored.config.multi_agent.assert_not_called()
             self.assertEqual(algorithm._counters["total_num_restored_workers"], 1)
 
         def route_to_league(*args, **kwargs):
@@ -129,6 +136,11 @@ class TestAlgorithm(unittest.TestCase):
         ):
             with self.subTest(mapping_fn=mapping_fn, trainable=trainable):
                 run_restore(mapping_fn, trainable)
+
+        # Evaluation EnvRunnerGroups have no local source; their weights may
+        # come from the training EnvRunner, but its runtime selectors are not
+        # the evaluation group's intended configuration.
+        run_restore(route_to_league, {"main"}, local_source=False)
 
     def test_add_module_and_remove_module(self):
         config = (
