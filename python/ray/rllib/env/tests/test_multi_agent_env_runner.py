@@ -1,16 +1,19 @@
 import unittest
+from unittest.mock import patch
 
 import gymnasium as gym
 import numpy as np
 
 import ray
 from ray.rllib.algorithms.ppo.ppo import PPOConfig
+from ray.rllib.core import COMPONENT_RL_MODULE
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 from ray.rllib.env.multi_agent_env_runner import MultiAgentEnvRunner
 from ray.rllib.examples.envs.classes.multi_agent import MultiAgentCartPole
 from ray.rllib.utils.metrics import (
     EPISODE_AGENT_RETURN_MEAN,
     EPISODE_MODULE_RETURN_MEAN,
+    WEIGHTS_SEQ_NO,
 )
 from ray.rllib.utils.test_utils import check
 
@@ -89,6 +92,74 @@ class TestMultiAgentEnvRunner(unittest.TestCase):
     @classmethod
     def tearDownClass(self) -> None:
         ray.shutdown()
+
+    def test_set_state_keeps_weight_version_monotonic(self):
+        """A rejected stale state must not move the runner's version backwards."""
+        env_runner = MultiAgentEnvRunner(config=self._build_config())
+        env_runner._weights_seq_no = 8
+        module_state = {"test": "module-state"}
+
+        with patch.object(env_runner.module, "set_state") as set_module_state:
+            # A stale positive version is rejected and must not downgrade the
+            # version that describes the weights already installed on this runner.
+            env_runner.set_state(
+                {
+                    COMPONENT_RL_MODULE: module_state,
+                    WEIGHTS_SEQ_NO: 7,
+                }
+            )
+            set_module_state.assert_not_called()
+            self.assertEqual(env_runner._weights_seq_no, 8)
+
+            # An equal version is also a no-op.
+            env_runner.set_state(
+                {
+                    COMPONENT_RL_MODULE: module_state,
+                    WEIGHTS_SEQ_NO: 8,
+                }
+            )
+            set_module_state.assert_not_called()
+            self.assertEqual(env_runner._weights_seq_no, 8)
+
+            # A newer version advances only after its state is installed.
+            env_runner.set_state(
+                {
+                    COMPONENT_RL_MODULE: module_state,
+                    WEIGHTS_SEQ_NO: 9,
+                }
+            )
+            set_module_state.assert_called_once_with(module_state)
+            self.assertEqual(env_runner._weights_seq_no, 9)
+
+            # Version zero and a missing version retain force-apply semantics,
+            # but neither is allowed to reset the positive sequence number.
+            set_module_state.reset_mock()
+            env_runner.set_state(
+                {
+                    COMPONENT_RL_MODULE: module_state,
+                    WEIGHTS_SEQ_NO: 0,
+                }
+            )
+            set_module_state.assert_called_once_with(module_state)
+            self.assertEqual(env_runner._weights_seq_no, 9)
+
+            set_module_state.reset_mock()
+            env_runner.set_state({COMPONENT_RL_MODULE: module_state})
+            set_module_state.assert_called_once_with(module_state)
+            self.assertEqual(env_runner._weights_seq_no, 9)
+
+            # A failed module update must not publish a version for weights
+            # that were never installed.
+            set_module_state.reset_mock()
+            set_module_state.side_effect = RuntimeError("module update failed")
+            with self.assertRaisesRegex(RuntimeError, "module update failed"):
+                env_runner.set_state(
+                    {
+                        COMPONENT_RL_MODULE: module_state,
+                        WEIGHTS_SEQ_NO: 10,
+                    }
+                )
+            self.assertEqual(env_runner._weights_seq_no, 9)
 
     def test_sample_timesteps(self):
         # Build a multi agent config.
