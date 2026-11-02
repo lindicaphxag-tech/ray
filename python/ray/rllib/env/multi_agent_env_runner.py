@@ -769,16 +769,16 @@ class MultiAgentEnvRunner(EnvRunner, Checkpointable):
             weights_seq_no = state.get(WEIGHTS_SEQ_NO, 0)
 
             # Only update the weights, if this is the first synchronization or
-            # if the weights of this `EnvRunner` lacks behind the actual ones.
+            # if the incoming weights are newer than the ones already installed.
             if weights_seq_no == 0 or self._weights_seq_no < weights_seq_no:
                 rl_module_state = state[COMPONENT_RL_MODULE]
                 if isinstance(rl_module_state, ray.ObjectRef):
                     rl_module_state = ray.get(rl_module_state)
                 self.module.set_state(rl_module_state)
 
-            # Update weights_seq_no, if the new one is > 0.
-            if weights_seq_no > 0:
-                self._weights_seq_no = weights_seq_no
+                # Advance the version only after the matching weights are applied.
+                if weights_seq_no > 0:
+                    self._weights_seq_no = weights_seq_no
 
         # Update lifetime counters.
         if NUM_ENV_STEPS_SAMPLED_LIFETIME in state:
