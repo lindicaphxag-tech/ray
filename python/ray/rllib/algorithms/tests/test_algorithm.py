@@ -119,7 +119,8 @@ class TestAlgorithm(unittest.TestCase):
         def route_to_league(*args, **kwargs):
             return "league_1"
 
-        should_train = lambda policy_id, batch: policy_id == "main"
+        def should_train(policy_id, batch):
+            return policy_id == "main"
         # None is a valid selector value, not a signal to skip restoration.
         for mapping_fn, trainable in (
             (route_to_league, None),
