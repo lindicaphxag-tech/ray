@@ -2356,6 +2356,28 @@ class Algorithm(Checkpointable, Trainable):
             )
             state_ref = ray.put(state)
 
+        # Runtime multi-agent routing and trainability selectors can be changed
+        # on the local EnvRunner (e.g. by a league callback) without changing the
+        # AlgorithmConfig. They are not part of EnvRunner.get_state(), so copy
+        # them from the same source as the weights during recovery.
+        restore_multi_agent_config = (
+            from_env_runner is not None
+            and self.config.enable_env_runner_and_connector_v2
+            and self.config.is_multi_agent
+        )
+        # None is a meaningful value for either selector (default mapping / train
+        # all), so use the explicit mode flag rather than testing either value.
+        restore_policy_mapping_fn = (
+            from_env_runner.config.policy_mapping_fn
+            if restore_multi_agent_config
+            else None
+        )
+        restore_policies_to_train = (
+            from_env_runner.config.policies_to_train
+            if restore_multi_agent_config
+            else None
+        )
+
         def _sync_env_runner(er):  # noqa
             # Remove modules (new API stack only), if necessary.
             if (
@@ -2371,6 +2393,14 @@ class Algorithm(Checkpointable, Trainable):
                         er.module.add_module(mid, mod_spec.build(), override=False)
             # Now that the MultiRLModule is fixed, update the state.
             er.set_state(ray.get(state_ref))
+
+            # Install the runtime selectors only after their referenced modules
+            # and weights are present on this same restored EnvRunner.
+            if restore_multi_agent_config:
+                er.config.multi_agent(
+                    policy_mapping_fn=restore_policy_mapping_fn,
+                    policies_to_train=restore_policies_to_train,
+                )
 
         # By default, entire local EnvRunner state is synced after restoration
         # to bring the previously failed EnvRunner up to date.
