@@ -2310,7 +2310,8 @@ class Algorithm(Checkpointable, Trainable):
         # Count the restored workers.
         self._counters["total_num_restored_workers"] += len(restored)
 
-        from_env_runner = env_runner_group.local_env_runner or self.env_runner
+        local_env_runner = env_runner_group.local_env_runner
+        from_env_runner = local_env_runner or self.env_runner
 
         # Sync from local EnvRunner, if it exists.
         if from_env_runner is not None:
@@ -2361,7 +2362,7 @@ class Algorithm(Checkpointable, Trainable):
         # AlgorithmConfig. They are not part of EnvRunner.get_state(), so copy
         # them from the same source as the weights during recovery.
         restore_multi_agent_config = (
-            from_env_runner is not None
+            local_env_runner is not None
             and self.config.enable_env_runner_and_connector_v2
             and self.config.is_multi_agent
         )
