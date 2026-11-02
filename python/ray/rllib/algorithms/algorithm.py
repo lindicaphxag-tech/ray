@@ -2313,6 +2313,25 @@ class Algorithm(Checkpointable, Trainable):
         local_env_runner = env_runner_group.local_env_runner
         from_env_runner = local_env_runner or self.env_runner
 
+        # Capture runtime selectors from this group's local source, alongside
+        # the state snapshot. A fallback training EnvRunner is not the source
+        # of truth for an evaluation group's routing configuration.
+        restore_multi_agent_config = (
+            local_env_runner is not None
+            and self.config.enable_env_runner_and_connector_v2
+            and self.config.is_multi_agent
+        )
+        restore_policy_mapping_fn = (
+            local_env_runner.config.policy_mapping_fn
+            if restore_multi_agent_config
+            else None
+        )
+        restore_policies_to_train = (
+            local_env_runner.config.policies_to_train
+            if restore_multi_agent_config
+            else None
+        )
+
         # Sync from local EnvRunner, if it exists.
         if from_env_runner is not None:
             # Get the state of the EnvRunner.
@@ -2356,28 +2375,6 @@ class Algorithm(Checkpointable, Trainable):
                 default=0,
             )
             state_ref = ray.put(state)
-
-        # Runtime multi-agent routing and trainability selectors can be changed
-        # on the local EnvRunner (e.g. by a league callback) without changing the
-        # AlgorithmConfig. They are not part of EnvRunner.get_state(), so copy
-        # them from the same source as the weights during recovery.
-        restore_multi_agent_config = (
-            local_env_runner is not None
-            and self.config.enable_env_runner_and_connector_v2
-            and self.config.is_multi_agent
-        )
-        # None is a meaningful value for either selector (default mapping / train
-        # all), so use the explicit mode flag rather than testing either value.
-        restore_policy_mapping_fn = (
-            from_env_runner.config.policy_mapping_fn
-            if restore_multi_agent_config
-            else None
-        )
-        restore_policies_to_train = (
-            from_env_runner.config.policies_to_train
-            if restore_multi_agent_config
-            else None
-        )
 
         def _sync_env_runner(er):  # noqa
             # Remove modules (new API stack only), if necessary.
