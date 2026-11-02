@@ -113,7 +113,9 @@ class TestAlgorithm(unittest.TestCase):
             self.assertEqual(events[0][0], "weights")
             self.assertEqual(events[0][1], source.get_state.return_value["rl_module"])
             if local_source:
-                self.assertEqual([event[0] for event in events], ["weights", "selectors"])
+                self.assertEqual(
+                    [event[0] for event in events], ["weights", "selectors"]
+                )
                 self.assertIs(events[1][1]["policy_mapping_fn"], policy_mapping_fn)
                 self.assertIs(events[1][1]["policies_to_train"], policies_to_train)
             else:
