@@ -2321,6 +2321,8 @@ class Algorithm(Checkpointable, Trainable):
             and self.config.enable_env_runner_and_connector_v2
             and self.config.is_multi_agent
         )
+        # None is a valid default for either selector, so use the explicit mode
+        # flag rather than testing the selector values themselves.
         restore_policy_mapping_fn = (
             local_env_runner.config.policy_mapping_fn
             if restore_multi_agent_config
