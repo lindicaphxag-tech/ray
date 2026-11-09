@@ -1,0 +1,43 @@
+name: RLlib native LearnerGroup async quiescence and restore
+on:
+  push:
+    branches:
+      - research/rllib-state-commit-failstop-20261024
+  pull_request:
+    branches:
+      - review/rllib-three-component-causal-state-20261023
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  remote-learner-group:
+    runs-on: ubuntu-latest
+    timeout-minutes: 24
+    env:
+      RAY_AUTH_MODE: disabled
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install native Ray 2.59 and PyTorch CPU
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install "ray[rllib]==2.59.0" pytest
+      - name: Copy Ray CartPole offline fixture omitted from wheel
+        run: |
+          python - <<'PY'
+          import pathlib,shutil,ray
+          s=pathlib.Path('python/ray/rllib/offline/tests/data/cartpole/large.json')
+          d=pathlib.Path(ray.__file__).resolve().parent/'rllib/offline/tests/data/cartpole/large.json'
+          assert s.is_file() and s.stat().st_size>1000
+          d.parent.mkdir(parents=True,exist_ok=True)
+          shutil.copyfile(s,d)
+          PY
+      - name: Real LearnerGroup async update, freeze, drain and state restore
+        run: |
+          python -m py_compile ci/rllib_native_group_async_drain.py
+          cp ci/rllib_native_group_async_drain.py /tmp/
+          cd /tmp
+          timeout 600s python -u rllib_native_group_async_drain.py

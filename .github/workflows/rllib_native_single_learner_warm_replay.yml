@@ -1,0 +1,45 @@
+name: RLlib native single Learner warm-state transition and pure Torch positive control
+on:
+  push:
+    branches:
+      - research/rllib-state-commit-failstop-20261024
+  pull_request:
+    branches:
+      - review/rllib-three-component-causal-state-20261023
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  single-learner-positive-control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    env:
+      RAY_AUTH_MODE: disabled
+      OMP_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install native Ray and CPU PyTorch
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install "ray[rllib]==2.59.0"
+      - name: Copy original offline CartPole fixture
+        run: |
+          python - <<'PY'
+          import pathlib,shutil,ray
+          p=pathlib.Path("python/ray/rllib/offline/tests/data/cartpole/large.json")
+          t=pathlib.Path(ray.__file__).resolve().parent/"rllib/offline/tests/data/cartpole/large.json"
+          assert p.exists()
+          t.parent.mkdir(parents=True,exist_ok=True)
+          shutil.copyfile(p,t)
+          PY
+      - name: Single native Learner next-step and pure torch Adam equality
+        run: |
+          python -m py_compile ci/rllib_native_single_learner_warm_replay.py
+          cp ci/rllib_native_two_learner_ddp_crash_health.py /tmp/
+          cp ci/rllib_native_single_learner_warm_replay.py /tmp/
+          cd /tmp
+          timeout 360s python -u rllib_native_single_learner_warm_replay.py

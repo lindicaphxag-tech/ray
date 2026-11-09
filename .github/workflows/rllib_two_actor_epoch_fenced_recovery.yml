@@ -1,0 +1,48 @@
+name: RLlib native two-actor fenced recovery
+on:
+  push:
+    branches:
+      - research/rllib-state-commit-failstop-20261024
+  pull_request:
+    branches:
+      - review/rllib-three-component-causal-state-20261023
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-two-actor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RAY_AUTH_MODE: disabled
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install native Ray binary and PyTorch CPU
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install "ray[rllib]==2.59.0" pytest
+      - name: Check real source and protocol syntax
+        run: |
+          python -m py_compile python/ray/rllib/core/learner/learner.py
+          python -m py_compile ci/rllib_two_actor_epoch_fenced_recovery.py
+      - name: Restore native Ray CartPole dataset omitted from published wheel
+        run: |
+          python - <<'PY'
+          import pathlib,shutil,ray
+          source=pathlib.Path("python/ray/rllib/offline/tests/data/cartpole/large.json")
+          destination=pathlib.Path(ray.__file__).resolve().parent/"rllib/offline/tests/data/cartpole/large.json"
+          assert source.is_file() and source.stat().st_size>1000
+          destination.parent.mkdir(parents=True,exist_ok=True)
+          shutil.copyfile(source,destination)
+          print("Native CartPole fixture",destination.stat().st_size,"bytes")
+          PY
+      - name: Two Ray actor epoch failure, barrier and rebuild
+        run: |
+          cp python/ray/rllib/core/learner/learner.py /tmp/review_learner.py
+          cp ci/rllib_two_actor_epoch_fenced_recovery.py /tmp/
+          cd /tmp
+          timeout 480s python -u rllib_two_actor_epoch_fenced_recovery.py /tmp/review_learner.py
