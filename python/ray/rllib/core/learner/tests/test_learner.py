@@ -144,6 +144,28 @@ class TestLearner(unittest.TestCase):
             )
         )
 
+    def test_failed_module_install_does_not_publish_weight_version(self):
+        """The version advances only if a module state update succeeds."""
+        from unittest.mock import patch
+
+        learner = BaseTestingAlgorithmConfig().build_learner(env=self.ENV)
+        baseline = learner.get_state()
+        initial_seq = baseline[WEIGHTS_SEQ_NO]
+        module_state = baseline[COMPONENT_RL_MODULE]
+
+        # Both an unversioned forced update and a newer versioned update
+        # must fail without advertising weights that were never installed.
+        for payload in (
+            {COMPONENT_RL_MODULE: module_state},
+            {COMPONENT_RL_MODULE: module_state, WEIGHTS_SEQ_NO: initial_seq + 5},
+        ):
+            with patch.object(
+                learner.module, "set_state", side_effect=RuntimeError("install failed")
+            ):
+                with self.assertRaisesRegex(RuntimeError, "install failed"):
+                    learner.set_state(payload)
+            self.assertEqual(learner.get_state()[WEIGHTS_SEQ_NO], initial_seq)
+
     def test_end_to_end_update(self):
         """Tests the end-to-end update process for a single-agent scenario.
 
