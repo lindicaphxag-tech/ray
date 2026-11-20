@@ -3,8 +3,6 @@ on:
   push:
     branches:
       - research/autorlbench-image-probe-20261121
-    paths:
-      - .github/workflows/autorlbench-shared-image-probe.yml
   workflow_dispatch:
 
 permissions:
