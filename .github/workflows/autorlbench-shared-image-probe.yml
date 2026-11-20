@@ -13,38 +13,19 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-24.04
-    container:
-      image: verlai/verl:vllm017.latest@sha256:4c43bbf17e90284b1102008399240b25406e8d34fea178d86272231b333b7cb6
-      options: --shm-size=4g
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
-      - name: Inspect the pinned AutoRLBench image
+      - name: Inspect runner disk and pull official shared image
         shell: bash
         run: |
           set -euo pipefail
-          python --version
-          python - <<'PY'
-          import importlib.util
-          import platform
-          import sys
-          print("platform:", platform.platform())
-          print("python:", sys.version)
-          for name in ("torch", "ray", "gymnasium", "numpy", "pyarrow"):
-              spec = importlib.util.find_spec(name)
-              print(f"{name}_available:", spec is not None)
-              if spec is not None:
-                  module = __import__(name)
-                  print(f"{name}_version:", getattr(module, "__version__", "unknown"))
-          try:
-              import torch
-              print("torch_cpu_tensor:", (torch.ones(2) + 1).tolist())
-          except Exception as exc:
-              print("torch_probe_error:", repr(exc))
-              raise
-          try:
-              import ray
-              import ray.rllib
-              print("ray_rllib_import:", "ok", ray.__version__)
-          except Exception as exc:
-              print("ray_rllib_import_error:", repr(exc))
-          PY
+          df -h
+          docker pull ghcr.io/yhyayi/autorlbench:vllm0.6.3-torch2.4.0-flashattn2.6.3-cu121-py3.10@sha256:f5dbe597c6dad59dcbdee5e363e645f96656f9bea94641f3438f8b2f639c5b3d
+          docker image inspect ghcr.io/yhyayi/autorlbench:vllm0.6.3-torch2.4.0-flashattn2.6.3-cu121-py3.10@sha256:f5dbe597c6dad59dcbdee5e363e645f96656f9bea94641f3438f8b2f639c5b3d --format '{{.Size}}'
+      - name: Probe CPU torch and RLlib imports inside the pinned image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --shm-size=4g ghcr.io/yhyayi/autorlbench:vllm0.6.3-torch2.4.0-flashattn2.6.3-cu121-py3.10@sha256:f5dbe597c6dad59dcbdee5e363e645f96656f9bea94641f3438f8b2f639c5b3d python -c "import sys, torch; print(sys.version); print(torch.__version__); print((torch.ones(2)+1).tolist()); import importlib.util; print('ray_available=', importlib.util.find_spec('ray') is not None)"
+
+# branch trigger refresh: 2026-11-21
