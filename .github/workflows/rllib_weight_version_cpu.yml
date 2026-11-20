@@ -1,0 +1,31 @@
+name: RLlib Learner-to-EnvRunner source provenance regression (CPU)
+on:
+  pull_request:
+    paths:
+      - "ci/rllib_learner_weight_version_contract.py"
+      - ".github/workflows/rllib_weight_version_cpu.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile real source method and test fixture
+        run: |
+          python -m py_compile python/ray/rllib/core/learner/learner.py
+          python -m py_compile python/ray/rllib/env/multi_agent_env_runner.py
+          python -m py_compile ci/rllib_learner_weight_version_contract.py
+      - name: Verify fork patch executes Learner then EnvRunner version gate
+        run: python ci/rllib_learner_weight_version_contract.py
+      - name: Download original official PR base source as negative control
+        run: |
+          curl --fail --silent --show-error --location https://raw.githubusercontent.com/ray-project/ray/95d3a43269d92ed2f255801399abc428d580600b/python/ray/rllib/core/learner/learner.py -o /tmp/rllib_original_learner.py
+          curl --fail --silent --show-error --location https://raw.githubusercontent.com/ray-project/ray/95d3a43269d92ed2f255801399abc428d580600b/python/ray/rllib/env/multi_agent_env_runner.py -o /tmp/rllib_original_env_runner.py
+      - name: Reproduce original failure through official production methods
+        run: python ci/rllib_learner_weight_version_contract.py /tmp/rllib_original_learner.py /tmp/rllib_original_env_runner.py --baseline
