@@ -1,0 +1,29 @@
+name: AutoRLBench shared-image CPU feasibility probe
+on:
+  push:
+    branches:
+      - research/autorlbench-image-probe-20261121
+    paths:
+      - .github/workflows/autorlbench-shared-image-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Inspect runner disk and pull official shared image
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h
+          docker pull ghcr.io/yhyayi/autorlbench:vllm0.6.3-torch2.4.0-flashattn2.6.3-cu121-py3.10@sha256:f5dbe597c6dad59dcbdee5e363e645f96656f9bea94641f3438f8b2f639c5b3d
+          docker image inspect ghcr.io/yhyayi/autorlbench:vllm0.6.3-torch2.4.0-flashattn2.6.3-cu121-py3.10@sha256:f5dbe597c6dad59dcbdee5e363e645f96656f9bea94641f3438f8b2f639c5b3d --format '{{.Size}}'
+      - name: Probe CPU torch and RLlib imports inside the pinned image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --shm-size=4g ghcr.io/yhyayi/autorlbench:vllm0.6.3-torch2.4.0-flashattn2.6.3-cu121-py3.10@sha256:f5dbe597c6dad59dcbdee5e363e645f96656f9bea94641f3438f8b2f639c5b3d python -c "import sys, torch; print(sys.version); print(torch.__version__); print((torch.ones(2)+1).tolist()); import importlib.util; print('ray_available=', importlib.util.find_spec('ray') is not None)"
